@@ -225,12 +225,32 @@ class DocumentController extends Controller
             'document_id' => $intake->document_id,
             'original_name' => $intake->original_name,
             'storage_type' => $intake->storage_type,
+            'preview_url' => $this->resolvePreviewUrl($intake),
             'error_message' => $intake->error_message,
             'started_at' => $intake->started_at?->toISOString(),
             'finished_at' => $intake->finished_at?->toISOString(),
             'finalized_at' => $intake->finalized_at?->toISOString(),
             'created_at' => $intake->created_at?->toISOString(),
         ];
+    }
+
+    private function resolvePreviewUrl(DocumentIntake $intake): ?string
+    {
+        $previewUrl = $intake->getFirstMediaUrl('pages', 'thumb');
+
+        if ($previewUrl === '') {
+            $previewUrl = $intake->getFirstMediaUrl('pages');
+        }
+
+        if ($previewUrl === '') {
+            $previewUrl = $intake->getFirstMediaUrl('scans', 'thumb');
+        }
+
+        if ($previewUrl === '') {
+            $previewUrl = $intake->getFirstMediaUrl('scans');
+        }
+
+        return $previewUrl !== '' ? $previewUrl : null;
     }
 
     /**

@@ -179,6 +179,7 @@ class DocumentIntakeController extends Controller
             'document_id' => $intake->document_id,
             'original_name' => $intake->original_name,
             'storage_type' => $intake->storage_type,
+            'preview_url' => $this->resolvePreviewUrl($intake),
             'fields' => $intake->fields,
             'extracted_text' => $intake->extracted_text,
             'extracted_content' => $intake->extracted_content,
@@ -189,6 +190,25 @@ class DocumentIntakeController extends Controller
             'finalized_at' => $intake->finalized_at?->toISOString(),
             'created_at' => $intake->created_at?->toISOString(),
         ];
+    }
+
+    private function resolvePreviewUrl(DocumentIntake $intake): ?string
+    {
+        $previewUrl = $intake->getFirstMediaUrl('pages', 'thumb');
+
+        if ($previewUrl === '') {
+            $previewUrl = $intake->getFirstMediaUrl('pages');
+        }
+
+        if ($previewUrl === '') {
+            $previewUrl = $intake->getFirstMediaUrl('scans', 'thumb');
+        }
+
+        if ($previewUrl === '') {
+            $previewUrl = $intake->getFirstMediaUrl('scans');
+        }
+
+        return $previewUrl !== '' ? $previewUrl : null;
     }
 
     /**

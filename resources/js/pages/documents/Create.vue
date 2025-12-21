@@ -24,6 +24,7 @@ interface IntakeItem {
     document_id: number | null;
     original_name: string | null;
     storage_type: StorageType | null;
+    preview_url: string | null;
     error_message: string | null;
     created_at: string | null;
     started_at: string | null;
@@ -476,19 +477,32 @@ const breadcrumbs: BreadcrumbItem[] = [
                             class="rounded-xl border bg-background/60 p-4"
                         >
                             <div class="flex flex-wrap items-start justify-between gap-3">
-                                <div class="flex flex-col gap-1">
-                                    <p class="text-sm font-semibold text-foreground">
-                                        {{ item.original_name || 'Dokument' }}
-                                    </p>
-                                    <p class="text-xs text-muted-foreground">
-                                        Status: {{ statusLabel(item) }}
-                                    </p>
-                                    <p
-                                        v-if="item.status === 'queued' || item.status === 'processing'"
-                                        class="text-xs text-muted-foreground"
+                                <div class="flex items-start gap-3">
+                                    <div
+                                        class="flex h-16 w-12 items-center justify-center overflow-hidden rounded-lg border bg-muted/20 text-[10px] text-muted-foreground"
                                     >
-                                        Czas oczekiwania: {{ formatElapsed(item) }}
-                                    </p>
+                                        <img
+                                            v-if="item.preview_url"
+                                            :src="item.preview_url"
+                                            alt=""
+                                            class="h-full w-full object-contain"
+                                        />
+                                        <span v-else>Brak podgladu</span>
+                                    </div>
+                                    <div class="flex flex-col gap-1">
+                                        <p class="text-sm font-semibold text-foreground">
+                                            {{ item.original_name || 'Dokument' }}
+                                        </p>
+                                        <p class="text-xs text-muted-foreground">
+                                            Status: {{ statusLabel(item) }}
+                                        </p>
+                                        <p
+                                            v-if="item.status === 'queued' || item.status === 'processing'"
+                                            class="text-xs text-muted-foreground"
+                                        >
+                                            Czas oczekiwania: {{ formatElapsed(item) }}
+                                        </p>
+                                    </div>
                                 </div>
 
                                 <div class="flex flex-wrap items-center gap-2">

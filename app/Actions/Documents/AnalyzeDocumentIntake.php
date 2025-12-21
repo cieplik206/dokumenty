@@ -4,21 +4,27 @@ namespace App\Actions\Documents;
 
 use App\Models\DocumentIntake;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Prism\Prism\Enums\Provider;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\ValueObjects\Media\Image;
 use RuntimeException;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Spatie\PdfToImage\Enums\OutputFormat;
+use Spatie\PdfToImage\Pdf;
+use Throwable;
 
 class AnalyzeDocumentIntake
 {
-    private const MAX_IMAGES = 6;
+    private const MAX_IMAGES = 10;
 
-    private ?string $pdftoppmBinary = null;
+    private const MAX_PDF_PAGES = 10;
 
-    private bool $pdftoppmResolved = false;
+    private const PDF_RESOLUTION = 150;
+
+    private const PDF_QUALITY = 80;
 
     /**
      * @param  Collection<int, array<string, mixed>>  $categories
@@ -131,7 +137,21 @@ PROMPT;
 
             if ($mediaType === 'application/pdf') {
                 $remaining = self::MAX_IMAGES - count($images);
-                $images = array_merge($images, $this->imagesFromPdf($path, $remaining));
+                $pages = $this->ensurePdfPages($intake, $media, $remaining);
+
+                foreach ($pages as $pageMedia) {
+                    $pagePath = $pageMedia->getPath();
+
+                    if ($pagePath === '') {
+                        continue;
+                    }
+
+                    $images[] = Image::fromLocalPath($pagePath);
+
+                    if (count($images) >= self::MAX_IMAGES) {
+                        break;
+                    }
+                }
             }
         }
 
@@ -139,104 +159,83 @@ PROMPT;
     }
 
     /**
-     * @return array<int, Image>
+     * @return \Illuminate\Support\Collection<int, Media>
      */
-    private function imagesFromPdf(string $pdfPath, int $limit): array
+    private function ensurePdfPages(DocumentIntake $intake, Media $media, int $limit): \Illuminate\Support\Collection
     {
         if ($limit <= 0) {
-            return [];
+            return collect();
         }
 
-        if (! is_file($pdfPath)) {
+        $existing = collect($intake->getMedia('pages'))
+            ->filter(fn (Media $page) => (int) $page->getCustomProperty('source_media_id') === $media->id)
+            ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
+            ->values();
+
+        if ($existing->isNotEmpty()) {
+            return $existing->take($limit);
+        }
+
+        $pdfPath = $media->getPath();
+
+        if ($pdfPath === '' || ! is_file($pdfPath)) {
             throw new RuntimeException('Nie mozna odczytac pliku PDF.');
         }
 
-        return $this->convertPdfToImages($pdfPath, $limit);
-    }
+        $pdf = (new Pdf($pdfPath))
+            ->format(OutputFormat::Png)
+            ->quality(self::PDF_QUALITY)
+            ->resolution(self::PDF_RESOLUTION)
+            ->backgroundColor('white');
 
-    /**
-     * @return array<int, Image>
-     */
-    private function convertPdfToImages(string $pdfPath, int $limit): array
-    {
-        $binary = $this->resolvePdftoppmBinary();
+        $pageCount = min($pdf->pageCount(), self::MAX_PDF_PAGES, $limit);
 
-        if ($binary === null) {
-            throw ValidationException::withMessages([
-                'scans' => 'Brak narzedzia pdftoppm do konwersji PDF. Upewnij sie, ze jest dostepny w PATH procesu PHP lub dodaj obrazy.',
-            ]);
+        if ($pageCount < 1) {
+            return collect();
         }
 
-        $outputPrefix = tempnam(sys_get_temp_dir(), 'doc-pages-');
+        $tempDir = storage_path('app/tmp/pdf-pages-'.Str::uuid());
 
-        if ($outputPrefix === false) {
-            throw new RuntimeException('Nie mozna utworzyc plikow tymczasowych.');
+        File::ensureDirectoryExists($tempDir);
+
+        $paths = [];
+
+        try {
+            $paths = $pdf
+                ->selectPages(...range(1, $pageCount))
+                ->save($tempDir, 'page-');
+        } catch (Throwable $error) {
+            File::deleteDirectory($tempDir);
+
+            throw $error;
         }
 
-        @unlink($outputPrefix);
+        $created = collect();
+        $baseName = pathinfo($media->file_name ?? 'page', PATHINFO_FILENAME);
+        $baseName = Str::slug($baseName, '_');
 
-        $result = Process::run([
-            $binary,
-            '-f',
-            '1',
-            '-l',
-            (string) $limit,
-            '-r',
-            '150',
-            '-png',
-            $pdfPath,
-            $outputPrefix,
-        ]);
-
-        if (! $result->successful()) {
-            throw new RuntimeException('Nie udalo sie przekonwertowac PDF do obrazow.');
+        if ($baseName === '') {
+            $baseName = 'page';
         }
 
-        $paths = collect(glob($outputPrefix.'-*.png') ?: [])
-            ->sort()
-            ->values();
+        foreach ($paths as $index => $path) {
+            $pageNumber = $index + 1;
+            $fileName = sprintf('%s-%02d.png', $baseName, $pageNumber);
 
-        $images = [];
+            $pageMedia = $intake->addMedia($path)
+                ->usingFileName($fileName)
+                ->withCustomProperties([
+                    'source_media_id' => $media->id,
+                    'page' => $pageNumber,
+                ])
+                ->toMediaCollection('pages');
 
-        foreach ($paths as $path) {
-            $images[] = Image::fromLocalPath($path);
+            $created->push($pageMedia);
         }
 
-        foreach ($paths as $path) {
-            @unlink($path);
-        }
+        File::deleteDirectory($tempDir);
 
-        return $images;
-    }
-
-    private function resolvePdftoppmBinary(): ?string
-    {
-        if ($this->pdftoppmResolved) {
-            return $this->pdftoppmBinary;
-        }
-
-        $candidates = [
-            'pdftoppm',
-            '/opt/homebrew/bin/pdftoppm',
-            '/usr/local/bin/pdftoppm',
-            '/usr/bin/pdftoppm',
-        ];
-
-        foreach ($candidates as $candidate) {
-            $result = Process::run([$candidate, '-v']);
-
-            if ($result->successful()) {
-                $this->pdftoppmResolved = true;
-                $this->pdftoppmBinary = $candidate;
-
-                return $candidate;
-            }
-        }
-
-        $this->pdftoppmResolved = true;
-        $this->pdftoppmBinary = null;
-
-        return null;
+        return $created;
     }
 
     /**

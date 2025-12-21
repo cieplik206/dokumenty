@@ -100,8 +100,14 @@ class ProcessDocumentIntake implements ShouldQueue
                 ? tap($intake->document)->update($documentData)
                 : Document::create($documentData);
 
+            $intake->refresh();
+
             foreach ($intake->getMedia('scans') as $media) {
                 $media->move($document, 'scans');
+            }
+
+            foreach ($intake->getMedia('pages') as $media) {
+                $media->move($document, 'pages');
             }
 
             $intake->forceFill([

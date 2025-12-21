@@ -5,8 +5,10 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Spatie\Image\Enums\Fit;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 class DocumentIntake extends Model implements HasMedia
 {
@@ -79,5 +81,26 @@ class DocumentIntake extends Model implements HasMedia
     {
         $this->addMediaCollection('scans')
             ->useDisk('private');
+
+        $this->addMediaCollection('pages')
+            ->useDisk('private');
+    }
+
+    public function registerMediaConversions(?Media $media = null): void
+    {
+        if (
+            $media instanceof Media
+            && $media->collection_name === 'scans'
+            && $media->mime_type === 'application/pdf'
+        ) {
+            return;
+        }
+
+        $this->addMediaConversion('thumb')
+            ->fit(Fit::Contain, 150, 200)
+            ->format('jpg')
+            ->quality(80)
+            ->performOnCollections('pages', 'scans')
+            ->nonQueued();
     }
 }

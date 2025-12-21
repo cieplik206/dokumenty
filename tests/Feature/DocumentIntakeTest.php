@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\Documents\AnalyzeDocumentIntake;
 use App\Jobs\ProcessDocumentIntake;
 use App\Models\Binder;
 use App\Models\Document;
@@ -8,6 +9,11 @@ use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
+use Prism\Prism\Enums\FinishReason;
+use Prism\Prism\Facades\Prism;
+use Prism\Prism\Text\Response as TextResponse;
+use Prism\Prism\ValueObjects\Meta;
+use Prism\Prism\ValueObjects\Usage;
 
 test('document intake queues analysis for each file', function () {
     Storage::fake('private');
@@ -105,3 +111,123 @@ test('document intake can be retried when done without document', function () {
 
     Queue::assertPushed(ProcessDocumentIntake::class);
 });
+
+test('pdf intake generates page images and thumbnails', function () {
+    if (! class_exists(Imagick::class)) {
+        $this->markTestSkipped('Imagick is not available.');
+    }
+
+    Storage::fake('private');
+
+    Prism::fake([
+        new TextResponse(
+            steps: collect([]),
+            text: '{"type":"done"}',
+            finishReason: FinishReason::Stop,
+            toolCalls: [],
+            toolResults: [],
+            usage: new Usage(1, 1),
+            meta: new Meta('fake', 'fake-model'),
+            messages: collect([]),
+        ),
+    ]);
+
+    $intake = DocumentIntake::factory()->create();
+    $pdfPath = makeTestPdfPath();
+
+    if ($pdfPath === '') {
+        $this->markTestSkipped('Unable to generate PDF content.');
+    }
+
+    $intake->addMedia($pdfPath)
+        ->usingFileName('scan.pdf')
+        ->toMediaCollection('scans');
+
+    app(AnalyzeDocumentIntake::class)($intake, collect());
+
+    $intake->refresh();
+
+    $pages = $intake->getMedia('pages');
+
+    expect($pages)->not->toBeEmpty()
+        ->and($pages->count())->toBeLessThanOrEqual(10);
+
+    $firstPage = $pages->first();
+
+    expect($firstPage)->not->toBeNull()
+        ->and(file_exists($firstPage->getPath('thumb')))->toBeTrue();
+});
+
+test('pdf page thumbnails are available after moving to document', function () {
+    if (! class_exists(Imagick::class)) {
+        $this->markTestSkipped('Imagick is not available.');
+    }
+
+    Storage::fake('private');
+
+    Prism::fake([
+        new TextResponse(
+            steps: collect([]),
+            text: '{"type":"done"}',
+            finishReason: FinishReason::Stop,
+            toolCalls: [],
+            toolResults: [],
+            usage: new Usage(1, 1),
+            meta: new Meta('fake', 'fake-model'),
+            messages: collect([]),
+        ),
+    ]);
+
+    $intake = DocumentIntake::factory()->create();
+    $pdfPath = makeTestPdfPath();
+
+    if ($pdfPath === '') {
+        $this->markTestSkipped('Unable to generate PDF content.');
+    }
+
+    $intake->addMedia($pdfPath)
+        ->usingFileName('scan.pdf')
+        ->toMediaCollection('scans');
+
+    ProcessDocumentIntake::dispatchSync($intake);
+
+    $document = Document::query()->latest()->first();
+
+    expect($document)->not->toBeNull();
+
+    $document?->refresh();
+
+    $pages = $document?->getMedia('pages') ?? collect();
+
+    expect($pages)->not->toBeEmpty();
+
+    $firstPage = $pages->first();
+
+    expect($firstPage)->not->toBeNull()
+        ->and(file_exists($firstPage->getPath('thumb')))->toBeTrue();
+});
+
+function makeTestPdfPath(): string
+{
+    if (! class_exists(Imagick::class)) {
+        return '';
+    }
+
+    $tempBase = tempnam(sys_get_temp_dir(), 'pdf-');
+
+    if ($tempBase === false) {
+        return '';
+    }
+
+    $pdfPath = $tempBase.'.pdf';
+    @unlink($tempBase);
+
+    $imagick = new Imagick;
+    $imagick->newImage(200, 200, new ImagickPixel('white'));
+    $imagick->setImageFormat('pdf');
+    $imagick->writeImage($pdfPath);
+    $imagick->clear();
+    $imagick->destroy();
+
+    return file_exists($pdfPath) ? $pdfPath : '';
+}
