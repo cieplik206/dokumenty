@@ -12,6 +12,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Throwable;
 
 class DocumentIntakeController extends Controller
@@ -199,7 +201,10 @@ class DocumentIntakeController extends Controller
         $expiration = now()->addMinutes(30);
 
         foreach ([['pages', 'thumb'], ['pages', ''], ['scans', 'thumb'], ['scans', '']] as [$collection, $conversion]) {
-            $media = $intake->getFirstMedia($collection);
+            $media = $collection === 'scans'
+                ? $intake->getMedia($collection)
+                    ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                : $intake->getFirstMedia($collection);
 
             if (! $media) {
                 continue;

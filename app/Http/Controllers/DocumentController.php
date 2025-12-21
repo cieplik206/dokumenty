@@ -12,6 +12,7 @@ use App\Models\DocumentIntake;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
@@ -241,7 +242,10 @@ class DocumentController extends Controller
         $expiration = now()->addMinutes(30);
 
         foreach ([['pages', 'thumb'], ['pages', ''], ['scans', 'thumb'], ['scans', '']] as [$collection, $conversion]) {
-            $media = $intake->getFirstMedia($collection);
+            $media = $collection === 'scans'
+                ? $intake->getMedia($collection)
+                    ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                : $intake->getFirstMedia($collection);
 
             if (! $media) {
                 continue;
