@@ -310,4 +310,4 @@ Zakres: UI i streaming po prawej stronie strony tworzenia dokumentu.
 ## Decyzje
 - Przechowywanie: `documents.extracted_content` (JSON) + `documents.ai_metadata` (JSON, nullable), bez `document_ai_logs`.
 - Kategorie: do LLM przekazujemy liste kategorii (id/name/description), LLM zwraca `category_id` lub `category_name_new` gdy brak dopasowania.
-- PDF: uzywamy `spatie/pdf-to-image` (wymaga Imagick) albo `pdftoppm` przez shell; limit max 10 stron.
+- PDF: uzywamy `spatie/pdf-to-image` (wymaga Imagick); limit max 10 stron.
