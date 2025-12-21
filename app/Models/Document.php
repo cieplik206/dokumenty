@@ -29,6 +29,8 @@ class Document extends Model implements HasMedia
         'received_at',
         'notes',
         'tags',
+        'extracted_content',
+        'ai_metadata',
     ];
 
     /**
@@ -39,6 +41,8 @@ class Document extends Model implements HasMedia
         return [
             'document_date' => 'date',
             'received_at' => 'date',
+            'extracted_content' => 'array',
+            'ai_metadata' => 'array',
         ];
     }
 
@@ -56,6 +60,34 @@ class Document extends Model implements HasMedia
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
+    }
+
+    public function isPaper(): bool
+    {
+        return $this->binder_id !== null;
+    }
+
+    public function isElectronic(): bool
+    {
+        return $this->binder_id === null;
+    }
+
+    /**
+     * @param  Builder<Document>  $query
+     * @return Builder<Document>
+     */
+    public function scopePaper(Builder $query): Builder
+    {
+        return $query->whereNotNull('binder_id');
+    }
+
+    /**
+     * @param  Builder<Document>  $query
+     * @return Builder<Document>
+     */
+    public function scopeElectronic(Builder $query): Builder
+    {
+        return $query->whereNull('binder_id');
     }
 
     /**

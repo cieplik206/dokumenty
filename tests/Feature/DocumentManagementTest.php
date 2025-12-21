@@ -23,6 +23,7 @@ test('user can create a document with scans', function () {
     $scan = UploadedFile::fake()->create('scan.pdf', 200, 'application/pdf');
 
     $response = $this->actingAs($user)->post(route('documents.store'), [
+        'is_paper' => 1,
         'binder_id' => $binder->id,
         'category_id' => $category->id,
         'title' => 'Faktura za prad',
@@ -32,6 +33,15 @@ test('user can create a document with scans', function () {
         'received_at' => now()->toDateString(),
         'notes' => 'Platnosc do 10-tego.',
         'tags' => 'dom,prad,2024',
+        'extracted_content' => json_encode([
+            'summary' => 'Podsumowanie dokumentu.',
+            'key_points' => ['Kwota 120.00 PLN'],
+            'search_text' => 'Podsumowanie dokumentu. Kwota 120.00 PLN',
+        ]),
+        'ai_metadata' => json_encode([
+            'confidence' => 0.82,
+            'language' => 'pl',
+        ]),
         'scans' => [$scan],
     ]);
 
@@ -39,8 +49,46 @@ test('user can create a document with scans', function () {
 
     expect($document)->not->toBeNull();
     expect($document->getMedia('scans'))->toHaveCount(1);
+    expect($document->extracted_content)->toMatchArray([
+        'summary' => 'Podsumowanie dokumentu.',
+    ]);
+    expect($document->ai_metadata)->toMatchArray([
+        'language' => 'pl',
+    ]);
 
     $response->assertRedirect(route('documents.show', $document));
+});
+
+test('user can create an electronic document without binder', function () {
+    $user = User::factory()->create();
+    $category = Category::factory()->create();
+
+    $response = $this->actingAs($user)->post(route('documents.store'), [
+        'is_paper' => 0,
+        'category_id' => $category->id,
+        'title' => 'Polisa online',
+    ]);
+
+    $document = Document::query()->first();
+
+    expect($document)->not->toBeNull();
+    expect($document->binder_id)->toBeNull();
+
+    $response->assertSessionHasNoErrors();
+    $response->assertRedirect(route('documents.show', $document));
+});
+
+test('paper document requires binder', function () {
+    $user = User::factory()->create();
+    $category = Category::factory()->create();
+
+    $response = $this->actingAs($user)->post(route('documents.store'), [
+        'is_paper' => 1,
+        'category_id' => $category->id,
+        'title' => 'Potwierdzenie przelewu',
+    ]);
+
+    $response->assertSessionHasErrors(['binder_id']);
 });
 
 test('documents can be filtered by query', function () {

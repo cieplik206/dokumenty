@@ -6,6 +6,35 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class StoreDocumentRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        $decoded = [];
+
+        foreach (['extracted_content', 'ai_metadata'] as $field) {
+            $value = $this->input($field);
+
+            if (is_string($value)) {
+                $trimmed = trim($value);
+
+                if ($trimmed === '') {
+                    $decoded[$field] = null;
+
+                    continue;
+                }
+
+                $json = json_decode($trimmed, true);
+
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $decoded[$field] = $json;
+                }
+            }
+        }
+
+        if ($decoded !== []) {
+            $this->merge($decoded);
+        }
+    }
+
     /**
      * Get the validation rules that apply to the request.
      *
@@ -14,7 +43,8 @@ class StoreDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'binder_id' => ['required', 'integer', 'exists:binders,id'],
+            'is_paper' => ['required', 'boolean'],
+            'binder_id' => ['nullable', 'required_if:is_paper,1', 'integer', 'exists:binders,id'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'title' => ['required', 'string', 'max:255'],
             'reference_number' => ['nullable', 'string', 'max:255'],
@@ -23,6 +53,8 @@ class StoreDocumentRequest extends FormRequest
             'received_at' => ['nullable', 'date'],
             'notes' => ['nullable', 'string', 'max:4000'],
             'tags' => ['nullable', 'string', 'max:1000'],
+            'extracted_content' => ['nullable', 'array'],
+            'ai_metadata' => ['nullable', 'array'],
             'scans' => ['nullable', 'array'],
             'scans.*' => ['file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ];
@@ -34,6 +66,8 @@ class StoreDocumentRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'is_paper.required' => 'Wybierz typ dokumentu.',
+            'is_paper.boolean' => 'Typ dokumentu musi byc poprawny.',
             'binder_id.required' => 'Wybierz segregator.',
             'binder_id.exists' => 'Wybrany segregator nie istnieje.',
             'category_id.required' => 'Wybierz kategorie.',

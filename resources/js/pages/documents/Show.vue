@@ -40,7 +40,7 @@ interface DocumentDetails {
         id: number;
         name: string;
         location: string | null;
-    };
+    } | null;
     scans: ScanItem[];
 }
 
@@ -96,12 +96,15 @@ const breadcrumbs: BreadcrumbItem[] = [
                     <CardTitle>Metadane</CardTitle>
                     <CardDescription>
                         Segregator:
-                        <Link
-                            class="underline underline-offset-4"
-                            :href="bindersRoutes.show(document.binder.id).url"
-                        >
-                            {{ document.binder.name }}
-                        </Link>
+                        <template v-if="document.binder">
+                            <Link
+                                class="underline underline-offset-4"
+                                :href="bindersRoutes.show(document.binder.id).url"
+                            >
+                                {{ document.binder.name }}
+                            </Link>
+                        </template>
+                        <span v-else>Elektroniczny</span>
                     </CardDescription>
                 </CardHeader>
                 <CardContent class="space-y-2 text-sm">
@@ -114,7 +117,10 @@ const breadcrumbs: BreadcrumbItem[] = [
                         <p>Otrzymano: {{ document.received_at || 'Brak' }}</p>
                         <p class="md:col-span-2">
                             Lokalizacja segregatora:
-                            {{ document.binder.location || 'Brak' }}
+                            <span v-if="document.binder">
+                                {{ document.binder.location || 'Brak' }}
+                            </span>
+                            <span v-else>Brak (dokument elektroniczny)</span>
                         </p>
                     </div>
                     <p v-if="document.notes" class="text-muted-foreground">

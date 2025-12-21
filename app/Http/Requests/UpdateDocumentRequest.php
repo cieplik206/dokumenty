@@ -14,7 +14,8 @@ class UpdateDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'binder_id' => ['required', 'integer', 'exists:binders,id'],
+            'is_paper' => ['required', 'boolean'],
+            'binder_id' => ['nullable', 'required_if:is_paper,1', 'integer', 'exists:binders,id'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'title' => ['required', 'string', 'max:255'],
             'reference_number' => ['nullable', 'string', 'max:255'],
@@ -34,6 +35,8 @@ class UpdateDocumentRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'is_paper.required' => 'Wybierz typ dokumentu.',
+            'is_paper.boolean' => 'Typ dokumentu musi byc poprawny.',
             'binder_id.required' => 'Wybierz segregator.',
             'binder_id.exists' => 'Wybrany segregator nie istnieje.',
             'category_id.required' => 'Wybierz kategorie.',

@@ -3,6 +3,7 @@
 use App\Http\Controllers\BinderController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\DocumentController;
+use App\Http\Controllers\DocumentIntakeController;
 use App\Http\Controllers\DocumentMediaController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -22,6 +23,9 @@ Route::middleware('auth')->group(function () {
     Route::resource('categories', CategoryController::class)->except(['show']);
     Route::resource('binders', BinderController::class);
     Route::resource('documents', DocumentController::class);
+
+    Route::post('documents/intake', DocumentIntakeController::class)
+        ->name('documents.intake');
 
     Route::get('documents/{document}/media/{media}', [DocumentMediaController::class, 'download'])
         ->name('documents.media.download');

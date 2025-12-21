@@ -41,10 +41,12 @@ class DocumentController extends Controller
                 'document_date' => $document->document_date?->toDateString(),
                 'received_at' => $document->received_at?->toDateString(),
                 'media_count' => $document->media_count,
-                'binder' => [
-                    'id' => $document->binder->id,
-                    'name' => $document->binder->name,
-                ],
+                'binder' => $document->binder
+                    ? [
+                        'id' => $document->binder->id,
+                        'name' => $document->binder->name,
+                    ]
+                    : null,
             ]);
 
         $binders = Binder::query()
@@ -98,7 +100,13 @@ class DocumentController extends Controller
         $data = $request->validated();
         $scans = $request->file('scans', []);
 
-        unset($data['scans']);
+        $isPaper = filter_var($data['is_paper'] ?? true, FILTER_VALIDATE_BOOLEAN);
+
+        if (! $isPaper) {
+            $data['binder_id'] = null;
+        }
+
+        unset($data['scans'], $data['is_paper']);
 
         $document = Document::create($data);
 
@@ -146,11 +154,13 @@ class DocumentController extends Controller
                 'received_at' => $document->received_at?->toDateString(),
                 'notes' => $document->notes,
                 'tags' => $document->tags,
-                'binder' => [
-                    'id' => $document->binder->id,
-                    'name' => $document->binder->name,
-                    'location' => $document->binder->location,
-                ],
+                'binder' => $document->binder
+                    ? [
+                        'id' => $document->binder->id,
+                        'name' => $document->binder->name,
+                        'location' => $document->binder->location,
+                    ]
+                    : null,
                 'scans' => $scans,
             ],
         ]);
@@ -212,7 +222,13 @@ class DocumentController extends Controller
         $data = $request->validated();
         $scans = $request->file('scans', []);
 
-        unset($data['scans']);
+        $isPaper = filter_var($data['is_paper'] ?? true, FILTER_VALIDATE_BOOLEAN);
+
+        if (! $isPaper) {
+            $data['binder_id'] = null;
+        }
+
+        unset($data['scans'], $data['is_paper']);
 
         $document->update($data);
 

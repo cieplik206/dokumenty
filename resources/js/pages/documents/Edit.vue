@@ -11,7 +11,7 @@ import categoriesRoutes from '@/routes/categories';
 import documentsRoutes from '@/routes/documents';
 import { type BreadcrumbItem } from '@/types';
 import { Form, Head, Link } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
 interface BinderOption {
     id: number;
@@ -42,7 +42,7 @@ interface DocumentDetails {
     received_at: string | null;
     notes: string | null;
     tags: string | null;
-    binder_id: number;
+    binder_id: number | null;
     scans: ScanItem[];
 }
 
@@ -52,9 +52,34 @@ const props = defineProps<{
     categories: CategoryOption[];
 }>();
 
+const binderId = ref<number | null>(props.document.binder_id ?? null);
+const isPaper = ref(binderId.value !== null);
+const lastPaperBinderId = ref<number | null>(binderId.value);
+
+const setPaper = (): void => {
+    isPaper.value = true;
+    if (lastPaperBinderId.value !== null) {
+        binderId.value = lastPaperBinderId.value;
+        return;
+    }
+
+    binderId.value = props.binders[0]?.id ?? null;
+};
+
+const setElectronic = (): void => {
+    isPaper.value = false;
+    binderId.value = null;
+};
+
 const selectedCategoryId = ref<number | null>(
     props.document.category_id ?? props.categories[0]?.id ?? null,
 );
+
+watch(binderId, (value) => {
+    if (isPaper.value) {
+        lastPaperBinderId.value = value;
+    }
+});
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -84,6 +109,11 @@ const breadcrumbs: BreadcrumbItem[] = [
                 class="flex max-w-3xl flex-col gap-6"
                 v-slot="{ errors, processing }"
             >
+                <input
+                    type="hidden"
+                    name="is_paper"
+                    :value="isPaper ? '1' : '0'"
+                />
                 <div class="grid gap-2">
                     <Label for="title">Tytul</Label>
                     <Input
@@ -96,13 +126,46 @@ const breadcrumbs: BreadcrumbItem[] = [
                 </div>
 
                 <div class="grid gap-2">
-                    <Label for="binder_id">Segregator</Label>
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <Label for="binder_id">Segregator</Label>
+                        <div
+                            class="inline-flex items-center rounded-lg border border-input bg-background p-0.5 text-xs font-medium text-muted-foreground"
+                        >
+                            <button
+                                type="button"
+                                class="rounded-md px-3 py-1 transition"
+                                :class="
+                                    isPaper
+                                        ? 'bg-primary text-primary-foreground shadow-sm'
+                                        : 'hover:text-foreground'
+                                "
+                                :aria-pressed="isPaper"
+                                @click="setPaper"
+                            >
+                                Papierowa
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md px-3 py-1 transition"
+                                :class="
+                                    !isPaper
+                                        ? 'bg-primary text-primary-foreground shadow-sm'
+                                        : 'hover:text-foreground'
+                                "
+                                :aria-pressed="!isPaper"
+                                @click="setElectronic"
+                            >
+                                Elektroniczna
+                            </button>
+                        </div>
+                    </div>
                     <select
+                        v-if="isPaper"
                         id="binder_id"
+                        v-model.number="binderId"
                         name="binder_id"
-                        required
+                        :required="isPaper"
                         class="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] dark:bg-input/30"
-                        :value="document.binder_id"
                     >
                         <option disabled value="">Wybierz segregator</option>
                         <option
@@ -113,6 +176,9 @@ const breadcrumbs: BreadcrumbItem[] = [
                             {{ binderOption.name }}
                         </option>
                     </select>
+                    <p v-else class="text-xs text-muted-foreground">
+                        Dokument elektroniczny nie wymaga segregatora.
+                    </p>
                     <InputError :message="errors.binder_id" />
                 </div>
 
