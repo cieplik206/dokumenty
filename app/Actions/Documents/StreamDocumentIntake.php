@@ -38,6 +38,7 @@ class StreamDocumentIntake
             ->using(Provider::OpenAI, 'gpt-5-mini')
             ->withSystemPrompt($this->systemPrompt())
             ->withPrompt($this->userPrompt($categories), $images)
+            ->withClientOptions(['timeout' => 300])
             ->asDataStreamResponse();
     }
 

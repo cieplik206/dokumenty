@@ -11,7 +11,7 @@ use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
 
 test('document intake streams ai response', function () {
-    Prism::fake([
+    $fake = Prism::fake([
         new TextResponse(
             steps: collect([]),
             text: '{"type":"done"}',
@@ -55,7 +55,14 @@ test('document intake streams ai response', function () {
     $response->assertSuccessful();
     $response->assertHeader('x-vercel-ai-ui-message-stream', 'v1');
 
-    expect($response->streamedContent())
+    $streamedContent = $response->streamedContent();
+
+    $fake->assertRequest(function (array $requests): void {
+        expect($requests)->toHaveCount(1);
+        expect($requests[0]->clientOptions())->toMatchArray(['timeout' => 300]);
+    });
+
+    expect($streamedContent)
         ->toContain('"text-delta"')
         ->toContain('[DONE]');
 });
