@@ -11,6 +11,8 @@ use App\Models\DocumentIntake;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Storage;
+use Throwable;
 
 class DocumentIntakeController extends Controller
 {
@@ -194,21 +196,33 @@ class DocumentIntakeController extends Controller
 
     private function resolvePreviewUrl(DocumentIntake $intake): ?string
     {
-        $previewUrl = $intake->getFirstMediaUrl('pages', 'thumb');
+        $expiration = now()->addMinutes(30);
 
-        if ($previewUrl === '') {
-            $previewUrl = $intake->getFirstMediaUrl('pages');
+        foreach ([['pages', 'thumb'], ['pages', ''], ['scans', 'thumb'], ['scans', '']] as [$collection, $conversion]) {
+            $media = $intake->getFirstMedia($collection);
+
+            if (! $media) {
+                continue;
+            }
+
+            $conversionName = $conversion;
+
+            if ($conversionName !== '' && ! $media->hasGeneratedConversion($conversionName)) {
+                $conversionName = '';
+            }
+
+            try {
+                if (Storage::disk($media->disk)->providesTemporaryUrls()) {
+                    return $media->getTemporaryUrl($expiration, $conversionName);
+                }
+            } catch (Throwable) {
+                // Fallback below when disk doesn't support temporary URLs in tests.
+            }
+
+            return $media->getUrl($conversionName);
         }
 
-        if ($previewUrl === '') {
-            $previewUrl = $intake->getFirstMediaUrl('scans', 'thumb');
-        }
-
-        if ($previewUrl === '') {
-            $previewUrl = $intake->getFirstMediaUrl('scans');
-        }
-
-        return $previewUrl !== '' ? $previewUrl : null;
+        return null;
     }
 
     /**
