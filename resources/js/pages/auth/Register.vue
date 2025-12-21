@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import AuthBase from '@/layouts/AuthLayout.vue';
 import { login } from '@/routes';
-import { store } from '@/routes/register';
 import { Form, Head } from '@inertiajs/vue3';
+
+const registerUrl = '/register';
 </script>
 
 <template>
@@ -19,7 +20,7 @@ import { Form, Head } from '@inertiajs/vue3';
         <Head title="Register" />
 
         <Form
-            :action="store().url"
+            :action="registerUrl"
             method="post"
             :reset-on-success="['password', 'password_confirmation']"
             v-slot="{ errors, processing }"

@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import AuthBase from '@/layouts/AuthLayout.vue';
-import { register } from '@/routes';
 import { store } from '@/routes/login';
 import { request } from '@/routes/password';
 import { Form, Head, router } from '@inertiajs/vue3';
@@ -19,6 +18,7 @@ defineProps<{
 }>();
 
 const loginLinkEmail = 'pawel@cieplinski.pl';
+const registerUrl = '/register';
 
 const loginAsPawel = (): void => {
     router.post('/laravel-login-link-login', { email: loginLinkEmail });
@@ -111,7 +111,7 @@ const loginAsPawel = (): void => {
                     v-if="canRegister"
                 >
                     Don't have an account?
-                    <TextLink :href="register()" :tabindex="5">Sign up</TextLink>
+                    <TextLink :href="registerUrl" :tabindex="5">Sign up</TextLink>
                 </div>
             </Form>
 

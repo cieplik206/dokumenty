@@ -2,30 +2,18 @@
 
 use App\Http\Controllers\BinderController;
 use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\DocumentIntakeController;
 use App\Http\Controllers\DocumentMediaController;
-use App\Models\Document;
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
-use Laravel\Fortify\Features;
-use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
-Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canRegister' => Features::enabled(Features::registration()),
-    ]);
-})->name('home');
+Route::get('/', [DashboardController::class, 'index'])
+    ->middleware(['auth', 'verified'])
+    ->name('dashboard');
 
-Route::get('dashboard', function () {
-    return Inertia::render('Dashboard', [
-        'stats' => [
-            'documentsCount' => Document::count(),
-            'totalSize' => Media::sum('size'),
-            'lastDocumentAt' => Document::latest()->first()?->created_at,
-        ],
-    ]);
-})->middleware(['auth', 'verified'])->name('dashboard');
+Route::get('dashboard', fn () => redirect()->route('dashboard'))
+    ->middleware(['auth', 'verified']);
 
 Route::middleware('auth')->group(function () {
     Route::resource('categories', CategoryController::class)->except(['show']);
