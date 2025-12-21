@@ -14,33 +14,65 @@ import { dashboard } from '@/routes';
 import binders from '@/routes/binders';
 import categories from '@/routes/categories';
 import documents from '@/routes/documents';
-import { type NavItem } from '@/types';
-import { Link } from '@inertiajs/vue3';
-import { FileText, Folder, LayoutGrid, Tags } from 'lucide-vue-next';
+import { compact as documentsCompact, grid as documentsGrid, table as documentsTable } from '@/routes/documents/index/index';
+import usersRoutes from '@/routes/users';
+import { type AppPageProps, type NavItem } from '@/types';
+import { Link, usePage } from '@inertiajs/vue3';
+import { FileText, Folder, Grid3X3, LayoutGrid, LayoutList, List, Tags, Users } from 'lucide-vue-next';
+import { computed } from 'vue';
 import AppLogo from './AppLogo.vue';
 
-const mainNavItems: NavItem[] = [
-    {
-        title: 'Dashboard',
-        href: dashboard(),
-        icon: LayoutGrid,
-    },
-    {
-        title: 'Dokumenty',
-        href: documents.index(),
-        icon: FileText,
-    },
-    {
-        title: 'Segregatory',
-        href: binders.index(),
-        icon: Folder,
-    },
-    {
-        title: 'Kategorie',
-        href: categories.index(),
-        icon: Tags,
-    },
-];
+const page = usePage<AppPageProps>();
+
+const mainNavItems = computed<NavItem[]>(() => {
+    const items: NavItem[] = [
+        {
+            title: 'Dashboard',
+            href: dashboard(),
+            icon: LayoutGrid,
+        },
+        {
+            title: 'Dokumenty',
+            href: documents.index(),
+            icon: FileText,
+        },
+        {
+            title: 'Dokumenty (Grid)',
+            href: documentsGrid(),
+            icon: Grid3X3,
+        },
+        {
+            title: 'Dokumenty (Tabela)',
+            href: documentsTable(),
+            icon: LayoutList,
+        },
+        {
+            title: 'Dokumenty (Kompakt)',
+            href: documentsCompact(),
+            icon: List,
+        },
+        {
+            title: 'Segregatory',
+            href: binders.index(),
+            icon: Folder,
+        },
+        {
+            title: 'Kategorie',
+            href: categories.index(),
+            icon: Tags,
+        },
+    ];
+
+    if (page.props.auth.user?.is_admin) {
+        items.push({
+            title: 'Uzytkownicy',
+            href: usersRoutes.index(),
+            icon: Users,
+        });
+    }
+
+    return items;
+});
 </script>
 
 <template>

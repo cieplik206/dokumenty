@@ -4,11 +4,9 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cookie;
-use Illuminate\Support\Facades\View;
 use Symfony\Component\HttpFoundation\Response;
 
-class HandleAppearance
+class EnsureUserIsAdmin
 {
     /**
      * Handle an incoming request.
@@ -17,14 +15,8 @@ class HandleAppearance
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $appearance = $request->user()?->appearance
-            ?? $request->cookie('appearance')
-            ?? 'system';
-
-        View::share('appearance', $appearance);
-
-        if ($request->user()) {
-            Cookie::queue('appearance', $appearance, 525600, '/', null, false, false, false, 'Lax');
+        if (! $request->user()?->is_admin) {
+            abort(403);
         }
 
         return $next($request);

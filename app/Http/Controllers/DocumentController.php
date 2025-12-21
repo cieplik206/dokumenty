@@ -25,6 +25,38 @@ class DocumentController extends Controller
      */
     public function index(DocumentIndexRequest $request): Response
     {
+        return $this->renderIndex($request, 'documents/Index');
+    }
+
+    /**
+     * Display documents in grid view.
+     */
+    public function indexGrid(DocumentIndexRequest $request): Response
+    {
+        return $this->renderIndex($request, 'documents/IndexGrid');
+    }
+
+    /**
+     * Display documents in table view.
+     */
+    public function indexTable(DocumentIndexRequest $request): Response
+    {
+        return $this->renderIndex($request, 'documents/IndexTable');
+    }
+
+    /**
+     * Display documents in compact view.
+     */
+    public function indexCompact(DocumentIndexRequest $request): Response
+    {
+        return $this->renderIndex($request, 'documents/IndexCompact');
+    }
+
+    /**
+     * Common method to render document index views.
+     */
+    private function renderIndex(DocumentIndexRequest $request, string $component): Response
+    {
         $filters = $request->validated();
 
         $documents = Document::query()
@@ -64,7 +96,7 @@ class DocumentController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
-        return Inertia::render('documents/Index', [
+        return Inertia::render($component, [
             'documents' => $documents,
             'binders' => $binders,
             'categories' => $categories,

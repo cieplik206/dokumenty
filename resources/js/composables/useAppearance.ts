@@ -1,3 +1,6 @@
+import { update as updateAppearanceRoute } from '@/routes/appearance';
+import type { AppPageProps } from '@/types';
+import { router, usePage } from '@inertiajs/vue3';
 import { onMounted, ref } from 'vue';
 
 type Appearance = 'light' | 'dark' | 'system';
@@ -32,6 +35,17 @@ const setCookie = (name: string, value: string, days = 365) => {
     document.cookie = `${name}=${value};path=/;max-age=${maxAge};SameSite=Lax`;
 };
 
+const getCookie = (name: string) => {
+    if (typeof document === 'undefined') {
+        return null;
+    }
+
+    const cookies = document.cookie.split('; ').map((cookie) => cookie.split('='));
+    const match = cookies.find(([key]) => key === name);
+
+    return match ? decodeURIComponent(match[1]) : null;
+};
+
 const mediaQuery = () => {
     if (typeof window === 'undefined') {
         return null;
@@ -45,7 +59,15 @@ const getStoredAppearance = () => {
         return null;
     }
 
-    return localStorage.getItem('appearance') as Appearance | null;
+    const cookieAppearance = getCookie('appearance') as Appearance | null;
+    const storedAppearance = localStorage.getItem('appearance') as Appearance | null;
+
+    if (cookieAppearance && cookieAppearance !== storedAppearance) {
+        localStorage.setItem('appearance', cookieAppearance);
+        return cookieAppearance;
+    }
+
+    return storedAppearance ?? cookieAppearance;
 };
 
 const handleSystemThemeChange = () => {
@@ -70,10 +92,10 @@ export function initializeTheme() {
 const appearance = ref<Appearance>('system');
 
 export function useAppearance() {
+    const page = usePage<AppPageProps>();
+
     onMounted(() => {
-        const savedAppearance = localStorage.getItem(
-            'appearance',
-        ) as Appearance | null;
+        const savedAppearance = getStoredAppearance();
 
         if (savedAppearance) {
             appearance.value = savedAppearance;
@@ -90,6 +112,14 @@ export function useAppearance() {
         setCookie('appearance', value);
 
         updateTheme(value);
+
+        if (page.props.auth?.user) {
+            router.patch(
+                updateAppearanceRoute().url,
+                { appearance: value },
+                { preserveScroll: true, preserveState: true },
+            );
+        }
     }
 
     return {
