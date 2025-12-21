@@ -21,6 +21,9 @@ class DocumentIntakeFactory extends Factory
         return [
             'user_id' => User::factory(),
             'status' => DocumentIntake::STATUS_QUEUED,
+            'document_id' => null,
+            'original_name' => $this->faker->word().'.pdf',
+            'storage_type' => null,
             'fields' => null,
             'extracted_text' => null,
             'extracted_content' => null,
@@ -28,6 +31,7 @@ class DocumentIntakeFactory extends Factory
             'error_message' => null,
             'started_at' => null,
             'finished_at' => null,
+            'finalized_at' => null,
         ];
     }
 

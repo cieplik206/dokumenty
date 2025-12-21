@@ -30,12 +30,19 @@ Route::get('dashboard', function () {
 Route::middleware('auth')->group(function () {
     Route::resource('categories', CategoryController::class)->except(['show']);
     Route::resource('binders', BinderController::class);
-    Route::resource('documents', DocumentController::class);
 
     Route::post('documents/intake', [DocumentIntakeController::class, 'store'])
         ->name('documents.intake');
-    Route::get('documents/intake/{intake}', [DocumentIntakeController::class, 'show'])
-        ->name('documents.intake.show');
+    Route::get('documents/intake', [DocumentIntakeController::class, 'index'])
+        ->name('documents.intake.index');
+    Route::post('documents/intake/{intake}/finalize', [DocumentIntakeController::class, 'finalize'])
+        ->name('documents.intake.finalize');
+    Route::post('documents/intake/{intake}/retry', [DocumentIntakeController::class, 'retry'])
+        ->name('documents.intake.retry');
+    Route::delete('documents/intake/{intake}', [DocumentIntakeController::class, 'destroy'])
+        ->name('documents.intake.destroy');
+
+    Route::resource('documents', DocumentController::class);
 
     Route::get('documents/{document}/media/{media}', [DocumentMediaController::class, 'download'])
         ->name('documents.media.download');

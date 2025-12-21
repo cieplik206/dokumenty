@@ -20,6 +20,7 @@ class DocumentFactory extends Factory
     {
         return [
             'binder_id' => Binder::factory(),
+            'status' => \App\Models\Document::STATUS_READY,
             'category_id' => Category::factory(),
             'title' => $this->faker->sentence(4),
             'reference_number' => $this->faker->optional()->bothify('REF-####-????'),

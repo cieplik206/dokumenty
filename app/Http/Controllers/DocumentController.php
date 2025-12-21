@@ -28,6 +28,7 @@ class DocumentController extends Controller
             ->with(['binder', 'category'])
             ->withCount('media')
             ->filter($filters)
+            ->where('status', Document::STATUS_READY)
             ->orderByDesc('document_date')
             ->orderByDesc('created_at')
             ->paginate(15)
@@ -77,19 +78,8 @@ class DocumentController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
-        $categories = Category::query()
-            ->orderBy('name')
-            ->get(['id', 'name']);
-
         return Inertia::render('documents/Create', [
             'binders' => $binders,
-            'categories' => $categories,
-            'selectedBinderId' => $binders
-                ->firstWhere('id', $request->integer('binder'))
-                ?->id,
-            'selectedCategoryId' => $categories
-                ->firstWhere('id', $request->integer('category'))
-                ?->id,
         ]);
     }
 
@@ -135,7 +125,10 @@ class DocumentController extends Controller
             $scans = [];
         }
 
-        $document = Document::create($data);
+        $document = Document::create([
+            ...$data,
+            'status' => Document::STATUS_READY,
+        ]);
 
         if ($intake instanceof DocumentIntake) {
             foreach ($intake->getMedia('scans') as $media) {

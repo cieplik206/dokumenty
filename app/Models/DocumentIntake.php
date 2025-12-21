@@ -23,12 +23,17 @@ class DocumentIntake extends Model implements HasMedia
 
     public const STATUS_FAILED = 'failed';
 
+    public const STATUS_FINALIZED = 'finalized';
+
     /**
      * @var list<string>
      */
     protected $fillable = [
         'user_id',
+        'document_id',
         'status',
+        'original_name',
+        'storage_type',
         'fields',
         'extracted_text',
         'extracted_content',
@@ -36,6 +41,7 @@ class DocumentIntake extends Model implements HasMedia
         'error_message',
         'started_at',
         'finished_at',
+        'finalized_at',
     ];
 
     /**
@@ -49,6 +55,7 @@ class DocumentIntake extends Model implements HasMedia
             'ai_metadata' => 'array',
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
+            'finalized_at' => 'datetime',
         ];
     }
 
@@ -58,6 +65,14 @@ class DocumentIntake extends Model implements HasMedia
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * @return BelongsTo<Document, DocumentIntake>
+     */
+    public function document(): BelongsTo
+    {
+        return $this->belongsTo(Document::class);
     }
 
     public function registerMediaCollections(): void

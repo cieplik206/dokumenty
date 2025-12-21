@@ -1,8 +1,8 @@
 <?php
 
 use App\Models\Binder;
-use App\Models\Category;
 use App\Models\Document;
+use App\Models\DocumentIntake;
 use App\Models\User;
 use Illuminate\Support\Str;
 use Prism\Prism\Enums\FinishReason;
@@ -11,11 +11,20 @@ use Prism\Prism\Text\Response as TextResponse;
 use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
 
-it('creates a document from the browser form', function () {
+it('creates a document from intake uploads', function () {
+    $ndjson = implode("\n", [
+        json_encode([
+            'type' => 'field',
+            'key' => 'title',
+            'value' => 'Faktura za prad',
+        ], JSON_UNESCAPED_UNICODE),
+        json_encode(['type' => 'done'], JSON_UNESCAPED_UNICODE),
+    ]);
+
     Prism::fake([
         new TextResponse(
             steps: collect([]),
-            text: '{"type":"done"}',
+            text: $ndjson,
             finishReason: FinishReason::Stop,
             toolCalls: [],
             toolResults: [],
@@ -26,8 +35,7 @@ it('creates a document from the browser form', function () {
     ]);
 
     $user = User::factory()->create();
-    $binder = Binder::factory()->create(['name' => 'Testowy segregator']);
-    $category = Category::factory()->create(['name' => 'Testowa kategoria']);
+    Binder::factory()->create(['name' => 'Testowy segregator']);
 
     $this->actingAs($user);
 
@@ -39,36 +47,26 @@ it('creates a document from the browser form', function () {
         $page = visit('http://dokumenty.test/documents/create');
 
         $page->attach('#scans', $filePath)
+            ->wait(2)
+            ->assertSee('Gotowe do decyzji')
+            ->press('Elektroniczna')
             ->wait(1)
-            ->type('#title', 'Faktura za prad')
-            ->type('#reference_number', 'REF-2024-001')
-            ->type('#issuer', 'Tauron')
-            ->select('binder_id', (string) $binder->id)
-            ->click($category->name)
-            ->type('#tags', 'dom, prad, 2024')
-            ->type('#document_date', '2024-04-29')
-            ->type('#received_at', '2024-04-30')
-            ->type('#notes', 'Testowe notatki')
-            ->press('Zapisz')
-            ->assertPathBeginsWith('/documents/');
+            ->assertSee('Decyzja zapisana.');
     } finally {
         @unlink($filePath);
     }
 
     $document = Document::query()->first();
 
-    expect($document)->not->toBeNull();
+    $intake = DocumentIntake::query()->first();
 
-    $this->assertDatabaseHas('documents', [
-        'id' => $document->id,
-        'binder_id' => $binder->id,
-        'category_id' => $category->id,
-        'title' => 'Faktura za prad',
-        'reference_number' => 'REF-2024-001',
-        'issuer' => 'Tauron',
-        'document_date' => '2024-04-29',
-        'received_at' => '2024-04-30',
-        'notes' => 'Testowe notatki',
-        'tags' => 'dom, prad, 2024',
-    ]);
+    expect($document)->not->toBeNull()
+        ->and($document->title)->toBe('Faktura za prad')
+        ->and($document->status)->toBe(Document::STATUS_READY)
+        ->and($document->binder_id)->toBeNull();
+
+    expect($intake)->not->toBeNull()
+        ->and($intake->status)->toBe(DocumentIntake::STATUS_FINALIZED)
+        ->and($intake->storage_type)->toBe('electronic')
+        ->and($intake->document_id)->toBe($document?->id);
 });

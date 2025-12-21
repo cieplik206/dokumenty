@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Actions\Documents\AnalyzeDocumentIntake;
 use App\Models\Category;
+use App\Models\Document;
 use App\Models\DocumentIntake;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -55,9 +56,57 @@ class ProcessDocumentIntake implements ShouldQueue
                 ]);
 
             $result = $analyzeDocumentIntake($intake, $categories);
+            $fields = $result['fields'] ?? [];
+
+            $title = data_get($fields, 'title');
+            $title = is_string($title) ? trim($title) : '';
+
+            if ($title === '') {
+                $fallbackName = $intake->original_name
+                    ? pathinfo($intake->original_name, PATHINFO_FILENAME)
+                    : null;
+                $title = $fallbackName !== '' && $fallbackName !== null ? $fallbackName : 'Dokument';
+            }
+
+            $tags = data_get($fields, 'tags');
+
+            if (is_array($tags)) {
+                $tags = collect($tags)->filter(fn ($tag) => is_string($tag) && $tag !== '')->join(', ');
+            }
+
+            $categoryId = data_get($fields, 'category_id');
+            $categoryId = is_numeric($categoryId) ? (int) $categoryId : null;
+
+            if (! $categories->pluck('id')->contains($categoryId)) {
+                $categoryId = null;
+            }
+
+            $documentData = [
+                'status' => Document::STATUS_DRAFT,
+                'binder_id' => null,
+                'category_id' => $categoryId,
+                'title' => $title,
+                'reference_number' => data_get($fields, 'reference_number'),
+                'issuer' => data_get($fields, 'issuer'),
+                'document_date' => data_get($fields, 'document_date'),
+                'received_at' => data_get($fields, 'received_at'),
+                'notes' => data_get($fields, 'notes'),
+                'tags' => $tags,
+                'extracted_content' => $result['extracted_content'],
+                'ai_metadata' => $result['metadata'],
+            ];
+
+            $document = $intake->document instanceof Document
+                ? tap($intake->document)->update($documentData)
+                : Document::create($documentData);
+
+            foreach ($intake->getMedia('scans') as $media) {
+                $media->move($document, 'scans');
+            }
 
             $intake->forceFill([
                 'status' => DocumentIntake::STATUS_DONE,
+                'document_id' => $document->id,
                 'fields' => $result['fields'],
                 'extracted_text' => $result['extracted_text'],
                 'extracted_content' => $result['extracted_content'],

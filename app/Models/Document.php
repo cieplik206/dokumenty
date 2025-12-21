@@ -16,11 +16,16 @@ class Document extends Model implements HasMedia
 
     use InteractsWithMedia;
 
+    public const STATUS_DRAFT = 'draft';
+
+    public const STATUS_READY = 'ready';
+
     /**
      * @var list<string>
      */
     protected $fillable = [
         'binder_id',
+        'status',
         'category_id',
         'title',
         'reference_number',
