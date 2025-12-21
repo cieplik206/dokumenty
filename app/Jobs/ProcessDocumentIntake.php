@@ -7,6 +7,7 @@ use App\Models\Category;
 use App\Models\DocumentIntake;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Prism\Prism\Exceptions\PrismException;
 use Throwable;
 
 class ProcessDocumentIntake implements ShouldQueue
@@ -64,9 +65,15 @@ class ProcessDocumentIntake implements ShouldQueue
                 'finished_at' => now(),
             ])->save();
         } catch (Throwable $error) {
+            $message = $error->getMessage();
+
+            if ($error instanceof PrismException && str_contains(strtolower($message), 'max tokens')) {
+                $message = 'Dokument jest zbyt obszerny do analizy. Sprobuj mniejszego pliku lub mniej stron.';
+            }
+
             $intake->forceFill([
                 'status' => DocumentIntake::STATUS_FAILED,
-                'error_message' => $error->getMessage(),
+                'error_message' => $message,
                 'finished_at' => now(),
             ])->save();
 

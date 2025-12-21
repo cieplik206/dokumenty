@@ -14,7 +14,7 @@ use RuntimeException;
 
 class AnalyzeDocumentIntake
 {
-    private const MAX_IMAGES = 10;
+    private const MAX_IMAGES = 6;
 
     private ?string $pdftoppmBinary = null;
 
@@ -43,6 +43,7 @@ class AnalyzeDocumentIntake
             ->using(Provider::OpenAI, 'gpt-5-mini')
             ->withSystemPrompt($this->systemPrompt())
             ->withPrompt($this->userPrompt($categories), $images)
+            ->withMaxTokens(1500)
             ->withClientOptions(['timeout' => 300])
             ->asText();
 
@@ -62,6 +63,11 @@ Dozwolone typy:
 - {"type":"done"}
 
 Wartosci pol nieznanych ustawiaj jako null. Daty w formacie YYYY-MM-DD. Tagi jako tablica stringow bez #.
+Ograniczenia dlugosci:
+- extracted_text: maksymalnie 4000 znakow (jesli wiecej, utnij).
+- extracted_content.summary: maksymalnie 600 znakow.
+- extracted_content.key_points: maksymalnie 8 punktow.
+- extracted_content.search_text: maksymalnie 1000 znakow.
 PROMPT;
     }
 
@@ -175,6 +181,8 @@ PROMPT;
             '1',
             '-l',
             (string) $limit,
+            '-r',
+            '150',
             '-png',
             $pdfPath,
             $outputPrefix,
