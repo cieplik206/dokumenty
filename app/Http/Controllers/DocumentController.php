@@ -78,8 +78,24 @@ class DocumentController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
+        $intakes = DocumentIntake::query()
+            ->where('user_id', $request->user()->id)
+            ->whereIn('status', [
+                DocumentIntake::STATUS_QUEUED,
+                DocumentIntake::STATUS_PROCESSING,
+                DocumentIntake::STATUS_DONE,
+                DocumentIntake::STATUS_FAILED,
+                DocumentIntake::STATUS_FINALIZED,
+            ])
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get();
+
         return Inertia::render('documents/Create', [
             'binders' => $binders,
+            'initialIntakes' => $intakes->map(
+                fn (DocumentIntake $intake) => $this->formatIntake($intake),
+            ),
         ]);
     }
 
@@ -192,6 +208,29 @@ class DocumentController extends Controller
                 'scans' => $scans,
             ],
         ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatIntake(?DocumentIntake $intake): array
+    {
+        if (! $intake instanceof DocumentIntake) {
+            return [];
+        }
+
+        return [
+            'id' => $intake->id,
+            'status' => $intake->status,
+            'document_id' => $intake->document_id,
+            'original_name' => $intake->original_name,
+            'storage_type' => $intake->storage_type,
+            'error_message' => $intake->error_message,
+            'started_at' => $intake->started_at?->toISOString(),
+            'finished_at' => $intake->finished_at?->toISOString(),
+            'finalized_at' => $intake->finalized_at?->toISOString(),
+            'created_at' => $intake->created_at?->toISOString(),
+        ];
     }
 
     /**

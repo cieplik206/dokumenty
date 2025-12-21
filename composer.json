@@ -17,7 +17,8 @@
         "laravel/wayfinder": "^0.1.9",
         "prism-php/prism": "^0.99.2",
         "spatie/laravel-login-link": "^1.6",
-        "spatie/laravel-medialibrary": "^11.17"
+        "spatie/laravel-medialibrary": "^11.17",
+        "spatie/pdf-to-image": "^3.1"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

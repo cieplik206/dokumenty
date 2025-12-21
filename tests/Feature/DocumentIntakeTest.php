@@ -80,3 +80,28 @@ test('document intake can be finalized as paper', function () {
     expect($document->status)->toBe(Document::STATUS_READY)
         ->and($document->binder_id)->toBe($binder->id);
 });
+
+test('document intake can be retried when done without document', function () {
+    Queue::fake();
+
+    $intake = DocumentIntake::factory()->done()->create([
+        'document_id' => null,
+    ]);
+
+    $response = $this
+        ->actingAs($intake->user)
+        ->postJson(route('documents.intake.retry', $intake));
+
+    $response
+        ->assertOk()
+        ->assertJsonFragment([
+            'id' => $intake->id,
+            'status' => DocumentIntake::STATUS_QUEUED,
+        ]);
+
+    $intake->refresh();
+
+    expect($intake->status)->toBe(DocumentIntake::STATUS_QUEUED);
+
+    Queue::assertPushed(ProcessDocumentIntake::class);
+});

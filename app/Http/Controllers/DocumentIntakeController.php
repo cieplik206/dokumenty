@@ -114,9 +114,12 @@ class DocumentIntakeController extends Controller
             abort(404);
         }
 
-        if ($intake->status !== DocumentIntake::STATUS_FAILED) {
+        $canRetry = $intake->status === DocumentIntake::STATUS_FAILED
+            || ($intake->status === DocumentIntake::STATUS_DONE && $intake->document_id === null);
+
+        if (! $canRetry) {
             return response()->json([
-                'message' => 'Tylko nieudane analizy mozna ponowic.',
+                'message' => 'Tylko nieudane lub niekompletne analizy mozna ponowic.',
             ], 409);
         }
 

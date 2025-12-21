@@ -33,6 +33,7 @@ interface IntakeItem {
 
 const props = defineProps<{
     binders: BinderOption[];
+    initialIntakes?: IntakeItem[];
 }>();
 
 const intakeUrl = '/documents/intake';
@@ -66,7 +67,7 @@ const isDragging = ref(false);
 const isUploading = ref(false);
 const uploadError = ref<string | null>(null);
 
-const uploads = ref<IntakeItem[]>([]);
+const uploads = ref<IntakeItem[]>(props.initialIntakes ?? []);
 const selectionState = reactive<Record<number, { paperMode: boolean; binderId: number | null }>>({});
 const actionBusy = reactive<Record<number, boolean>>({});
 
@@ -93,6 +94,14 @@ const statusLabel = (item: IntakeItem): string => {
         default:
             return 'Nieznany status';
     }
+};
+
+const canRetry = (item: IntakeItem): boolean => {
+    return item.status === 'failed' || (item.status === 'done' && !item.document_id);
+};
+
+const canFinalize = (item: IntakeItem): boolean => {
+    return item.status === 'done' && item.document_id !== null;
 };
 
 const formatElapsed = (item: IntakeItem): string => {
@@ -484,7 +493,7 @@ const breadcrumbs: BreadcrumbItem[] = [
 
                                 <div class="flex flex-wrap items-center gap-2">
                                     <Button
-                                        v-if="item.status === 'failed'"
+                                        v-if="canRetry(item)"
                                         size="sm"
                                         variant="outline"
                                         :disabled="actionBusy[item.id]"
@@ -512,7 +521,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                             </div>
 
                             <div
-                                v-if="item.status === 'done'"
+                                v-if="canFinalize(item)"
                                 class="mt-4 flex flex-col gap-3"
                             >
                                 <div class="flex flex-wrap items-center gap-2">
@@ -585,6 +594,13 @@ const breadcrumbs: BreadcrumbItem[] = [
                                 class="mt-3 text-xs text-muted-foreground"
                             >
                                 Decyzja zapisana.
+                            </div>
+
+                            <div
+                                v-if="item.status === 'done' && !item.document_id"
+                                class="mt-3 text-xs text-muted-foreground"
+                            >
+                                Analiza nie utworzyla dokumentu. Ponow analize.
                             </div>
                         </div>
                     </div>
