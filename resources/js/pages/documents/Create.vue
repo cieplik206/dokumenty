@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Heading from '@/components/Heading.vue';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import AppLayout from '@/layouts/AppLayout.vue';
 import bindersRoutes from '@/routes/binders';
@@ -25,6 +26,7 @@ interface IntakeItem {
     original_name: string | null;
     storage_type: StorageType | null;
     preview_url: string | null;
+    preview_full_url: string | null;
     error_message: string | null;
     created_at: string | null;
     started_at: string | null;
@@ -71,6 +73,8 @@ const uploadError = ref<string | null>(null);
 const uploads = ref<IntakeItem[]>(props.initialIntakes ?? []);
 const selectionState = reactive<Record<number, { paperMode: boolean; binderId: number | null }>>({});
 const actionBusy = reactive<Record<number, boolean>>({});
+const previewItem = ref<IntakeItem | null>(null);
+const isPreviewOpen = ref(false);
 
 const nowTick = ref(Date.now());
 let pollTimer: number | null = null;
@@ -375,6 +379,15 @@ const removeIntake = async (item: IntakeItem): Promise<void> => {
     }
 };
 
+const openPreview = (item: IntakeItem): void => {
+    if (!item.preview_full_url) {
+        return;
+    }
+
+    previewItem.value = item;
+    isPreviewOpen.value = true;
+};
+
 watch(
     pendingUploads,
     (items) => {
@@ -478,8 +491,11 @@ const breadcrumbs: BreadcrumbItem[] = [
                         >
                             <div class="flex flex-wrap items-start justify-between gap-3">
                                 <div class="flex items-start gap-3">
-                                    <div
-                                        class="flex h-16 w-12 items-center justify-center overflow-hidden rounded-lg border bg-muted/20 text-[10px] text-muted-foreground"
+                                    <button
+                                        type="button"
+                                        class="flex h-16 w-12 items-center justify-center overflow-hidden rounded-lg border bg-muted/20 text-[10px] text-muted-foreground transition hover:border-primary/50 disabled:cursor-not-allowed"
+                                        :disabled="!item.preview_full_url"
+                                        @click="openPreview(item)"
                                     >
                                         <img
                                             v-if="item.preview_url"
@@ -488,7 +504,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                                             class="h-full w-full object-contain"
                                         />
                                         <span v-else>Brak podgladu</span>
-                                    </div>
+                                    </button>
                                     <div class="flex flex-col gap-1">
                                         <p class="text-sm font-semibold text-foreground">
                                             {{ item.original_name || 'Dokument' }}
@@ -622,4 +638,25 @@ const breadcrumbs: BreadcrumbItem[] = [
             </div>
         </div>
     </AppLayout>
+
+    <Dialog :open="isPreviewOpen" @update:open="isPreviewOpen = $event">
+        <DialogContent class="max-w-3xl">
+            <DialogHeader>
+                <DialogTitle>
+                    {{ previewItem?.original_name || 'Podglad dokumentu' }}
+                </DialogTitle>
+            </DialogHeader>
+            <div class="flex max-h-[70vh] justify-center overflow-auto rounded-lg border bg-muted/10 p-4">
+                <img
+                    v-if="previewItem?.preview_full_url"
+                    :src="previewItem.preview_full_url"
+                    alt=""
+                    class="max-h-[60vh] w-auto object-contain"
+                />
+                <p v-else class="text-sm text-muted-foreground">
+                    Brak podgladu.
+                </p>
+            </div>
+        </DialogContent>
+    </Dialog>
 </template>

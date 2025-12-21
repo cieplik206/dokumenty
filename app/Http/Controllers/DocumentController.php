@@ -229,6 +229,7 @@ class DocumentController extends Controller
             'original_name' => $intake->original_name,
             'storage_type' => $intake->storage_type,
             'preview_url' => $this->resolvePreviewUrl($intake),
+            'preview_full_url' => $this->resolvePreviewFullUrl($intake),
             'error_message' => $intake->error_message,
             'started_at' => $intake->started_at?->toISOString(),
             'finished_at' => $intake->finished_at?->toISOString(),
@@ -266,6 +267,34 @@ class DocumentController extends Controller
             }
 
             return $media->getUrl($conversionName);
+        }
+
+        return null;
+    }
+
+    private function resolvePreviewFullUrl(DocumentIntake $intake): ?string
+    {
+        $expiration = now()->addMinutes(30);
+
+        foreach ([['pages', ''], ['scans', '']] as [$collection, $conversion]) {
+            $media = $collection === 'scans'
+                ? $intake->getMedia($collection)
+                    ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                : $intake->getFirstMedia($collection);
+
+            if (! $media) {
+                continue;
+            }
+
+            try {
+                if (Storage::disk($media->disk)->providesTemporaryUrls()) {
+                    return $media->getTemporaryUrl($expiration, $conversion);
+                }
+            } catch (Throwable) {
+                // Fallback below when disk doesn't support temporary URLs in tests.
+            }
+
+            return $media->getUrl($conversion);
         }
 
         return null;
