@@ -46,6 +46,7 @@ class DocumentController extends Controller
                 'document_date' => $document->document_date?->toDateString(),
                 'received_at' => $document->received_at?->toDateString(),
                 'media_count' => $document->media_count,
+                'thumbnail_url' => $this->resolveDocumentPreviewUrl($document),
                 'binder' => $document->binder
                     ? [
                         'id' => $document->binder->id,
@@ -84,6 +85,7 @@ class DocumentController extends Controller
         $intakes = DocumentIntake::query()
             ->where('user_id', $request->user()->id)
             ->whereIn('status', [
+                DocumentIntake::STATUS_UPLOADED,
                 DocumentIntake::STATUS_QUEUED,
                 DocumentIntake::STATUS_PROCESSING,
                 DocumentIntake::STATUS_DONE,
@@ -171,6 +173,7 @@ class DocumentController extends Controller
     public function show(Document $document): Response
     {
         $document->load('binder', 'category', 'media');
+        $pages = $this->resolveDocumentPages($document);
 
         $scans = $document->getMedia('scans')
             ->map(fn (Media $media) => [
@@ -208,6 +211,7 @@ class DocumentController extends Controller
                         'location' => $document->binder->location,
                     ]
                     : null,
+                'pages' => $pages,
                 'scans' => $scans,
             ],
         ]);
@@ -222,14 +226,25 @@ class DocumentController extends Controller
             return [];
         }
 
+        $pages = $this->resolvePreviewPages($intake);
+        $scans = $intake->getMedia('scans');
+
+        if ($scans->isEmpty() && $intake->document instanceof Document) {
+            $scans = $intake->document->getMedia('scans');
+        }
+
         return [
             'id' => $intake->id,
             'status' => $intake->status,
             'document_id' => $intake->document_id,
             'original_name' => $intake->original_name,
+            'title' => data_get($intake->fields, 'title'),
             'storage_type' => $intake->storage_type,
-            'preview_url' => $this->resolvePreviewUrl($intake),
-            'preview_full_url' => $this->resolvePreviewFullUrl($intake),
+            'preview_url' => $pages[0]['thumb_url'] ?? null,
+            'preview_full_url' => $pages[0]['url'] ?? null,
+            'pages' => $pages,
+            'scans_count' => $scans->count(),
+            'scans_size' => $scans->sum('size'),
             'error_message' => $intake->error_message,
             'started_at' => $intake->started_at?->toISOString(),
             'finished_at' => $intake->finished_at?->toISOString(),
@@ -238,66 +253,117 @@ class DocumentController extends Controller
         ];
     }
 
-    private function resolvePreviewUrl(DocumentIntake $intake): ?string
+    /**
+     * @return array<int, array{id:int, page:int, url:string, thumb_url:string|null}>
+     */
+    private function resolvePreviewPages(DocumentIntake $intake): array
     {
         $expiration = now()->addMinutes(30);
+        $pages = $intake->getMedia('pages')
+            ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
+            ->values();
 
-        foreach ([['pages', 'thumb'], ['pages', ''], ['scans', 'thumb'], ['scans', '']] as [$collection, $conversion]) {
-            $media = $collection === 'scans'
-                ? $intake->getMedia($collection)
-                    ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
-                : $intake->getFirstMedia($collection);
-
-            if (! $media) {
-                continue;
-            }
-
-            $conversionName = $conversion;
-
-            if ($conversionName !== '' && ! $media->hasGeneratedConversion($conversionName)) {
-                $conversionName = '';
-            }
-
-            try {
-                if (Storage::disk($media->disk)->providesTemporaryUrls()) {
-                    return $media->getTemporaryUrl($expiration, $conversionName);
-                }
-            } catch (Throwable) {
-                // Fallback below when disk doesn't support temporary URLs in tests.
-            }
-
-            return $media->getUrl($conversionName);
+        if ($pages->isEmpty() && $intake->document instanceof Document) {
+            $pages = $intake->document->getMedia('pages')
+                ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
+                ->values();
         }
 
-        return null;
+        if ($pages->isEmpty()) {
+            $pages = $intake->getMedia('scans')
+                ->filter(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                ->values();
+        }
+
+        if ($pages->isEmpty() && $intake->document instanceof Document) {
+            $pages = $intake->document->getMedia('scans')
+                ->filter(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                ->values();
+        }
+
+        return $pages->map(function (Media $media, int $index) use ($expiration) {
+            $pageNumber = (int) $media->getCustomProperty('page', $index + 1);
+            $url = $this->resolveMediaUrl($media, $expiration);
+            $thumbUrl = $media->hasGeneratedConversion('thumb')
+                ? $this->resolveMediaUrl($media, $expiration, 'thumb')
+                : $url;
+
+            return [
+                'id' => $media->id,
+                'page' => $pageNumber,
+                'url' => $url,
+                'thumb_url' => $thumbUrl !== $url ? $thumbUrl : null,
+            ];
+        })->all();
     }
 
-    private function resolvePreviewFullUrl(DocumentIntake $intake): ?string
+    private function resolveMediaUrl(Media $media, \DateTimeInterface $expiration, string $conversionName = ''): string
+    {
+        try {
+            if (Storage::disk($media->disk)->providesTemporaryUrls()) {
+                return $media->getTemporaryUrl($expiration, $conversionName);
+            }
+        } catch (Throwable) {
+            // Fallback below when disk doesn't support temporary URLs in tests.
+        }
+
+        return $media->getUrl($conversionName);
+    }
+
+    private function resolveDocumentPreviewUrl(Document $document): ?string
     {
         $expiration = now()->addMinutes(30);
 
-        foreach ([['pages', ''], ['scans', '']] as [$collection, $conversion]) {
-            $media = $collection === 'scans'
-                ? $intake->getMedia($collection)
-                    ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
-                : $intake->getFirstMedia($collection);
+        $pages = $document->getMedia('pages')
+            ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
+            ->values();
 
-            if (! $media) {
-                continue;
-            }
+        $media = $pages->first();
 
-            try {
-                if (Storage::disk($media->disk)->providesTemporaryUrls()) {
-                    return $media->getTemporaryUrl($expiration, $conversion);
-                }
-            } catch (Throwable) {
-                // Fallback below when disk doesn't support temporary URLs in tests.
-            }
-
-            return $media->getUrl($conversion);
+        if (! $media) {
+            $media = $document->getMedia('scans')
+                ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'));
         }
 
-        return null;
+        if (! $media) {
+            return null;
+        }
+
+        $conversion = $media->hasGeneratedConversion('thumb') ? 'thumb' : '';
+
+        return $this->resolveMediaUrl($media, $expiration, $conversion);
+    }
+
+    /**
+     * @return array<int, array{id:int, page:int, url:string, thumb_url:string|null}>
+     */
+    private function resolveDocumentPages(Document $document): array
+    {
+        $expiration = now()->addMinutes(30);
+        $pages = $document->getMedia('pages')
+            ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
+            ->values();
+
+        if ($pages->isEmpty()) {
+            $pages = $document->getMedia('scans')
+                ->filter(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                ->values();
+        }
+
+        return $pages->map(function (Media $media, int $index) use ($expiration) {
+            $pageNumber = (int) $media->getCustomProperty('page', $index + 1);
+            $url = $this->resolveMediaUrl($media, $expiration);
+            $thumbUrl = $media->hasGeneratedConversion('thumb')
+                ? $this->resolveMediaUrl($media, $expiration, 'thumb')
+                : $url;
+
+            return [
+                'id' => $media->id,
+                'page' => $pageNumber,
+                'url' => $url,
+                'thumb_url' => $thumbUrl !== $url ? $thumbUrl : null,
+            ];
+        })->all();
     }
 
     /**

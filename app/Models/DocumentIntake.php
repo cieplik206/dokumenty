@@ -17,6 +17,8 @@ class DocumentIntake extends Model implements HasMedia
 
     use InteractsWithMedia;
 
+    public const STATUS_UPLOADED = 'uploaded';
+
     public const STATUS_QUEUED = 'queued';
 
     public const STATUS_PROCESSING = 'processing';

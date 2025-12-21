@@ -15,18 +15,29 @@ interface BinderOption {
     name: string;
 }
 
-type IntakeStatus = 'queued' | 'processing' | 'done' | 'failed' | 'finalized';
+type IntakeStatus = 'uploaded' | 'queued' | 'processing' | 'done' | 'failed' | 'finalized';
 
 type StorageType = 'paper' | 'electronic';
+
+interface IntakePage {
+    id: number;
+    page: number;
+    url: string;
+    thumb_url: string | null;
+}
 
 interface IntakeItem {
     id: number;
     status: IntakeStatus;
     document_id: number | null;
     original_name: string | null;
+    title: string | null;
     storage_type: StorageType | null;
     preview_url: string | null;
     preview_full_url: string | null;
+    pages: IntakePage[];
+    scans_count: number;
+    scans_size: number;
     error_message: string | null;
     created_at: string | null;
     started_at: string | null;
@@ -70,11 +81,20 @@ const isDragging = ref(false);
 const isUploading = ref(false);
 const uploadError = ref<string | null>(null);
 
-const uploads = ref<IntakeItem[]>(props.initialIntakes ?? []);
+const uploads = ref<IntakeItem[]>(
+    (props.initialIntakes ?? []).map((item) => ({
+        ...item,
+        title: item.title ?? null,
+        pages: item.pages ?? [],
+        scans_count: item.scans_count ?? 0,
+        scans_size: item.scans_size ?? 0,
+    })),
+);
 const selectionState = reactive<Record<number, { paperMode: boolean; binderId: number | null }>>({});
 const actionBusy = reactive<Record<number, boolean>>({});
 const previewItem = ref<IntakeItem | null>(null);
 const isPreviewOpen = ref(false);
+const activePreviewIndex = ref(0);
 
 const nowTick = ref(Date.now());
 let pollTimer: number | null = null;
@@ -84,8 +104,26 @@ const pendingUploads = computed(() => {
     return uploads.value.filter((item) => item.status === 'queued' || item.status === 'processing');
 });
 
+const previewPages = computed(() => previewItem.value?.pages ?? []);
+
+const activePreviewPage = computed(() => {
+    return previewPages.value[activePreviewIndex.value] ?? null;
+});
+
+const previewLabel = computed(() => {
+    if (previewPages.value.length === 0) {
+        return null;
+    }
+
+    const current = activePreviewPage.value?.page ?? activePreviewIndex.value + 1;
+
+    return `Strona ${current} z ${previewPages.value.length}`;
+});
+
 const statusLabel = (item: IntakeItem): string => {
     switch (item.status) {
+        case 'uploaded':
+            return 'Czeka na start';
         case 'queued':
             return 'W kolejce';
         case 'processing':
@@ -103,6 +141,10 @@ const statusLabel = (item: IntakeItem): string => {
 
 const canRetry = (item: IntakeItem): boolean => {
     return item.status === 'failed' || (item.status === 'done' && !item.document_id);
+};
+
+const canStart = (item: IntakeItem): boolean => {
+    return item.status === 'uploaded';
 };
 
 const canFinalize = (item: IntakeItem): boolean => {
@@ -165,15 +207,30 @@ const upsertUploads = (items: IntakeItem[]): void => {
         const index = uploads.value.findIndex((item) => item.id === payload.id);
 
         if (index === -1) {
-            uploads.value.unshift(payload);
+            uploads.value.unshift({
+                ...payload,
+                pages: payload.pages ?? [],
+            });
             return;
         }
 
         uploads.value[index] = {
             ...uploads.value[index],
             ...payload,
+            pages: payload.pages ?? uploads.value[index].pages ?? [],
+            title: payload.title ?? uploads.value[index].title ?? null,
+            scans_count: payload.scans_count ?? uploads.value[index].scans_count ?? 0,
+            scans_size: payload.scans_size ?? uploads.value[index].scans_size ?? 0,
         };
     });
+};
+
+const formatFileSize = (size: number | null | undefined): string => {
+    if (!size || size <= 0) {
+        return '0 MB';
+    }
+
+    return `${(size / 1024 / 1024).toFixed(2)} MB`;
 };
 
 const parseErrorMessage = async (response: Response): Promise<string> => {
@@ -331,6 +388,31 @@ const finalizeIntake = async (item: IntakeItem, storageType: StorageType): Promi
     }
 };
 
+const startIntake = async (item: IntakeItem): Promise<void> => {
+    actionBusy[item.id] = true;
+
+    try {
+        const response = await fetch(`${intakeUrl}/${item.id}/start`, {
+            method: 'POST',
+            headers: buildHeaders(),
+            credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+            throw new Error(await parseErrorMessage(response));
+        }
+
+        const data = (await response.json()) as IntakeItem;
+        upsertUploads([data]);
+        startPolling();
+    } catch (error) {
+        uploadError.value =
+            error instanceof Error ? error.message : 'Nie udalo sie uruchomic analizy.';
+    } finally {
+        actionBusy[item.id] = false;
+    }
+};
+
 const retryIntake = async (item: IntakeItem): Promise<void> => {
     actionBusy[item.id] = true;
 
@@ -380,11 +462,12 @@ const removeIntake = async (item: IntakeItem): Promise<void> => {
 };
 
 const openPreview = (item: IntakeItem): void => {
-    if (!item.preview_full_url) {
+    if (item.pages.length === 0 && !item.preview_full_url) {
         return;
     }
 
     previewItem.value = item;
+    activePreviewIndex.value = 0;
     isPreviewOpen.value = true;
 };
 
@@ -401,6 +484,24 @@ watch(
     },
     { immediate: true },
 );
+
+watch(previewPages, (pages) => {
+    if (pages.length === 0) {
+        activePreviewIndex.value = 0;
+        return;
+    }
+
+    if (activePreviewIndex.value >= pages.length) {
+        activePreviewIndex.value = 0;
+    }
+});
+
+watch(isPreviewOpen, (open) => {
+    if (!open) {
+        previewItem.value = null;
+        activePreviewIndex.value = 0;
+    }
+});
 
 onBeforeUnmount(() => {
     stopPolling();
@@ -494,12 +595,12 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     <button
                                         type="button"
                                         class="flex h-16 w-12 items-center justify-center overflow-hidden rounded-lg border bg-muted/20 text-[10px] text-muted-foreground transition hover:border-primary/50 disabled:cursor-not-allowed"
-                                        :disabled="!item.preview_full_url"
+                                        :disabled="item.pages.length === 0 && !item.preview_full_url"
                                         @click="openPreview(item)"
                                     >
                                         <img
-                                            v-if="item.preview_url"
-                                            :src="item.preview_url"
+                                            v-if="item.pages[0]?.thumb_url || item.preview_url"
+                                            :src="item.pages[0]?.thumb_url ?? item.preview_url ?? undefined"
                                             alt=""
                                             class="h-full w-full object-contain"
                                         />
@@ -507,10 +608,19 @@ const breadcrumbs: BreadcrumbItem[] = [
                                     </button>
                                     <div class="flex flex-col gap-1">
                                         <p class="text-sm font-semibold text-foreground">
-                                            {{ item.original_name || 'Dokument' }}
+                                            {{ item.title || item.original_name || 'Dokument' }}
                                         </p>
                                         <p class="text-xs text-muted-foreground">
                                             Status: {{ statusLabel(item) }}
+                                        </p>
+                                        <p class="text-xs text-muted-foreground">
+                                            Plikow: {{ item.scans_count }} · {{ formatFileSize(item.scans_size) }}
+                                        </p>
+                                        <p
+                                            v-if="item.pages.length > 1"
+                                            class="text-xs text-muted-foreground"
+                                        >
+                                            Stron: {{ item.pages.length }}
                                         </p>
                                         <p
                                             v-if="item.status === 'queued' || item.status === 'processing'"
@@ -522,6 +632,14 @@ const breadcrumbs: BreadcrumbItem[] = [
                                 </div>
 
                                 <div class="flex flex-wrap items-center gap-2">
+                                    <Button
+                                        v-if="canStart(item)"
+                                        size="sm"
+                                        :disabled="actionBusy[item.id]"
+                                        @click="startIntake(item)"
+                                    >
+                                        Analizuj
+                                    </Button>
                                     <Button
                                         v-if="canRetry(item)"
                                         size="sm"
@@ -640,21 +758,57 @@ const breadcrumbs: BreadcrumbItem[] = [
     </AppLayout>
 
     <Dialog :open="isPreviewOpen" @update:open="isPreviewOpen = $event">
-        <DialogContent class="max-w-3xl">
+        <DialogContent class="max-w-5xl">
             <DialogHeader>
                 <DialogTitle>
                     {{ previewItem?.original_name || 'Podglad dokumentu' }}
                 </DialogTitle>
             </DialogHeader>
-            <div class="flex max-h-[70vh] justify-center overflow-auto rounded-lg border bg-muted/10 p-4">
-                <img
-                    v-if="previewItem?.preview_full_url"
-                    :src="previewItem.preview_full_url"
-                    alt=""
-                    class="max-h-[60vh] w-auto object-contain"
-                />
-                <p v-else class="text-sm text-muted-foreground">
-                    Brak podgladu.
+            <div class="grid gap-4">
+                <div
+                    v-if="previewPages.length > 1"
+                    class="flex gap-2 overflow-x-auto rounded-lg border bg-muted/10 p-2"
+                >
+                    <button
+                        v-for="(page, index) in previewPages"
+                        :key="page.id"
+                        type="button"
+                        class="flex h-16 w-12 flex-col items-center justify-center overflow-hidden rounded-md border bg-background/60 text-[10px] text-muted-foreground transition"
+                        :class="
+                            activePreviewIndex === index
+                                ? 'border-primary shadow-sm'
+                                : 'border-transparent hover:border-primary/40'
+                        "
+                        @click="activePreviewIndex = index"
+                    >
+                        <img
+                            :src="page.thumb_url ?? page.url"
+                            alt=""
+                            class="h-full w-full object-contain"
+                        />
+                    </button>
+                </div>
+
+                <div class="flex max-h-[70vh] justify-center overflow-auto rounded-lg border bg-muted/10 p-4">
+                    <img
+                        v-if="activePreviewPage"
+                        :src="activePreviewPage.url"
+                        alt=""
+                        class="max-h-[60vh] w-auto object-contain"
+                    />
+                    <img
+                        v-else-if="previewItem?.preview_full_url"
+                        :src="previewItem.preview_full_url"
+                        alt=""
+                        class="max-h-[60vh] w-auto object-contain"
+                    />
+                    <p v-else class="text-sm text-muted-foreground">
+                        Brak podgladu.
+                    </p>
+                </div>
+
+                <p v-if="previewLabel" class="text-xs text-muted-foreground">
+                    {{ previewLabel }}
                 </p>
             </div>
         </DialogContent>

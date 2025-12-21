@@ -32,6 +32,7 @@ interface DocumentItem {
     document_date: string | null;
     received_at: string | null;
     media_count: number;
+    thumbnail_url: string | null;
     binder: {
         id: number;
         name: string;
@@ -266,8 +267,14 @@ const activeFiltersCount = computed(() => {
                         class="flex items-center gap-4 p-3 hover:bg-muted/50 transition-colors"
                     >
                         <!-- Icon -->
-                        <div class="hidden sm:flex shrink-0 size-10 items-center justify-center rounded-lg bg-muted">
-                            <FileText class="size-5 text-muted-foreground" />
+                        <div class="hidden sm:flex shrink-0 size-10 items-center justify-center overflow-hidden rounded-lg bg-muted">
+                            <img
+                                v-if="document.thumbnail_url"
+                                :src="document.thumbnail_url"
+                                alt=""
+                                class="h-full w-full object-cover"
+                            />
+                            <FileText v-else class="size-5 text-muted-foreground" />
                         </div>
 
                         <!-- Main content -->

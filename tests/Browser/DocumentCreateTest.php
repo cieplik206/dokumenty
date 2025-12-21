@@ -48,6 +48,9 @@ it('creates a document from intake uploads', function () {
 
         $page->attach('#scans', $filePath)
             ->wait(2)
+            ->assertSee('Czeka na start')
+            ->press('Analizuj')
+            ->wait(2)
             ->assertSee('Gotowe do decyzji')
             ->press('Elektroniczna')
             ->wait(1)

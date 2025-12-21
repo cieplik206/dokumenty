@@ -25,6 +25,13 @@ interface ScanItem {
     delete_url: string;
 }
 
+interface DocumentPage {
+    id: number;
+    page: number;
+    url: string;
+    thumb_url: string | null;
+}
+
 interface DocumentDetails {
     id: number;
     title: string;
@@ -41,6 +48,7 @@ interface DocumentDetails {
         name: string;
         location: string | null;
     } | null;
+    pages: DocumentPage[];
     scans: ScanItem[];
 }
 
@@ -137,6 +145,18 @@ const breadcrumbs: BreadcrumbItem[] = [
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
+                    <div
+                        v-if="document.pages.length > 0"
+                        class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
+                    >
+                        <div
+                            v-for="page in document.pages"
+                            :key="page.id"
+                            class="overflow-hidden rounded-xl border bg-muted/10"
+                        >
+                            <img :src="page.url" alt="" class="h-full w-full object-contain" />
+                        </div>
+                    </div>
                     <div
                         v-if="document.scans.length === 0"
                         class="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground"

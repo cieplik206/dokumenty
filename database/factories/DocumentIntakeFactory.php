@@ -20,7 +20,7 @@ class DocumentIntakeFactory extends Factory
     {
         return [
             'user_id' => User::factory(),
-            'status' => DocumentIntake::STATUS_QUEUED,
+            'status' => DocumentIntake::STATUS_UPLOADED,
             'document_id' => null,
             'original_name' => $this->faker->word().'.pdf',
             'storage_type' => null,

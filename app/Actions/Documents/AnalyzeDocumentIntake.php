@@ -4,27 +4,17 @@ namespace App\Actions\Documents;
 
 use App\Models\DocumentIntake;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Prism\Prism\Enums\Provider;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\ValueObjects\Media\Image;
-use RuntimeException;
-use Spatie\MediaLibrary\MediaCollections\Models\Media;
-use Spatie\PdfToImage\Enums\OutputFormat;
-use Spatie\PdfToImage\Pdf;
-use Throwable;
 
 class AnalyzeDocumentIntake
 {
     private const MAX_IMAGES = 10;
 
-    private const MAX_PDF_PAGES = 10;
-
-    private const PDF_RESOLUTION = 150;
-
-    private const PDF_QUALITY = 80;
+    public function __construct(private DocumentIntakePageGenerator $pageGenerator) {}
 
     /**
      * @param  Collection<int, array<string, mixed>>  $categories
@@ -49,7 +39,7 @@ class AnalyzeDocumentIntake
             ->using(Provider::OpenAI, 'gpt-5-mini')
             ->withSystemPrompt($this->systemPrompt())
             ->withPrompt($this->userPrompt($categories), $images)
-            ->withMaxTokens(1500)
+            ->withMaxTokens(15000)
             ->withClientOptions(['timeout' => 300])
             ->asText();
 
@@ -69,6 +59,10 @@ Dozwolone typy:
 - {"type":"done"}
 
 Wartosci pol nieznanych ustawiaj jako null. Daty w formacie YYYY-MM-DD. Tagi jako tablica stringow bez #.
+Tytul ma byc opisowy i unikalny (nie kopiuj naglowka dokumentu typu "FAKTURA VAT"). Ma streszczac: typ dokumentu + kluczowy podmiot/przedmiot + data (jesli jest). Przyklady:
+- "Faktura Media Markt za MacBook Air 13 z 2025-01-13"
+- "Umowa najmu mieszkania Francuska 88/24 z Piotrem Borkiem z 2012-11-11"
+Unikaj numerow faktur jako samego tytulu, chyba ze brak innych danych.
 Ograniczenia dlugosci:
 - extracted_text: maksymalnie 4000 znakow (jesli wiecej, utnij).
 - extracted_content.summary: maksymalnie 600 znakow.
@@ -137,7 +131,7 @@ PROMPT;
 
             if ($mediaType === 'application/pdf') {
                 $remaining = self::MAX_IMAGES - count($images);
-                $pages = $this->ensurePdfPages($intake, $media, $remaining);
+                $pages = $this->pageGenerator->ensurePages($intake, $media, $remaining);
 
                 foreach ($pages as $pageMedia) {
                     $pagePath = $pageMedia->getPath();
@@ -156,86 +150,6 @@ PROMPT;
         }
 
         return $images;
-    }
-
-    /**
-     * @return \Illuminate\Support\Collection<int, Media>
-     */
-    private function ensurePdfPages(DocumentIntake $intake, Media $media, int $limit): \Illuminate\Support\Collection
-    {
-        if ($limit <= 0) {
-            return collect();
-        }
-
-        $existing = collect($intake->getMedia('pages'))
-            ->filter(fn (Media $page) => (int) $page->getCustomProperty('source_media_id') === $media->id)
-            ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
-            ->values();
-
-        if ($existing->isNotEmpty()) {
-            return $existing->take($limit);
-        }
-
-        $pdfPath = $media->getPath();
-
-        if ($pdfPath === '' || ! is_file($pdfPath)) {
-            throw new RuntimeException('Nie mozna odczytac pliku PDF.');
-        }
-
-        $pdf = (new Pdf($pdfPath))
-            ->format(OutputFormat::Png)
-            ->quality(self::PDF_QUALITY)
-            ->resolution(self::PDF_RESOLUTION)
-            ->backgroundColor('white');
-
-        $pageCount = min($pdf->pageCount(), self::MAX_PDF_PAGES, $limit);
-
-        if ($pageCount < 1) {
-            return collect();
-        }
-
-        $tempDir = storage_path('app/tmp/pdf-pages-'.Str::uuid());
-
-        File::ensureDirectoryExists($tempDir);
-
-        $paths = [];
-
-        try {
-            $paths = $pdf
-                ->selectPages(...range(1, $pageCount))
-                ->save($tempDir, 'page-');
-        } catch (Throwable $error) {
-            File::deleteDirectory($tempDir);
-
-            throw $error;
-        }
-
-        $created = collect();
-        $baseName = pathinfo($media->file_name ?? 'page', PATHINFO_FILENAME);
-        $baseName = Str::slug($baseName, '_');
-
-        if ($baseName === '') {
-            $baseName = 'page';
-        }
-
-        foreach ($paths as $index => $path) {
-            $pageNumber = $index + 1;
-            $fileName = sprintf('%s-%02d.png', $baseName, $pageNumber);
-
-            $pageMedia = $intake->addMedia($path)
-                ->usingFileName($fileName)
-                ->withCustomProperties([
-                    'source_media_id' => $media->id,
-                    'page' => $pageNumber,
-                ])
-                ->toMediaCollection('pages');
-
-            $created->push($pageMedia);
-        }
-
-        File::deleteDirectory($tempDir);
-
-        return $created;
     }
 
     /**

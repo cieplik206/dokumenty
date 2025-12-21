@@ -35,6 +35,8 @@ Route::middleware('auth')->group(function () {
         ->name('documents.intake');
     Route::get('documents/intake', [DocumentIntakeController::class, 'index'])
         ->name('documents.intake.index');
+    Route::post('documents/intake/{intake}/start', [DocumentIntakeController::class, 'start'])
+        ->name('documents.intake.start');
     Route::post('documents/intake/{intake}/finalize', [DocumentIntakeController::class, 'finalize'])
         ->name('documents.intake.finalize');
     Route::post('documents/intake/{intake}/retry', [DocumentIntakeController::class, 'retry'])

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\Documents\DocumentIntakePageGenerator;
 use App\Http\Requests\DocumentIntakeFinalizeRequest;
 use App\Http\Requests\DocumentIntakeIndexRequest;
 use App\Http\Requests\DocumentIntakeRequest;
@@ -21,7 +22,7 @@ class DocumentIntakeController extends Controller
     /**
      * Store a newly created intake request.
      */
-    public function store(DocumentIntakeRequest $request): JsonResponse
+    public function store(DocumentIntakeRequest $request, DocumentIntakePageGenerator $pageGenerator): JsonResponse
     {
         $user = $request->user();
         $intakes = collect();
@@ -29,14 +30,14 @@ class DocumentIntakeController extends Controller
         foreach ($request->file('scans', []) as $scan) {
             $intake = DocumentIntake::create([
                 'user_id' => $user->id,
-                'status' => DocumentIntake::STATUS_QUEUED,
+                'status' => DocumentIntake::STATUS_UPLOADED,
                 'original_name' => $scan->getClientOriginalName(),
             ]);
 
-            $intake->addMedia($scan)
+            $media = $intake->addMedia($scan)
                 ->toMediaCollection('scans');
 
-            ProcessDocumentIntake::dispatch($intake);
+            $pageGenerator->ensurePages($intake, $media, DocumentIntakePageGenerator::MAX_PDF_PAGES);
 
             $intakes->push($intake->refresh());
         }
@@ -110,6 +111,37 @@ class DocumentIntakeController extends Controller
     }
 
     /**
+     * Start processing an uploaded intake.
+     */
+    public function start(Request $request, DocumentIntake $intake): JsonResponse
+    {
+        if ($intake->user_id !== $request->user()->id) {
+            abort(404);
+        }
+
+        if ($intake->status !== DocumentIntake::STATUS_UPLOADED) {
+            return response()->json([
+                'message' => 'Analiza moze zostac uruchomiona tylko dla nowych skanow.',
+            ], 409);
+        }
+
+        $intake->forceFill([
+            'status' => DocumentIntake::STATUS_QUEUED,
+            'error_message' => null,
+            'fields' => null,
+            'extracted_text' => null,
+            'extracted_content' => null,
+            'ai_metadata' => null,
+            'started_at' => null,
+            'finished_at' => null,
+        ])->save();
+
+        ProcessDocumentIntake::dispatch($intake);
+
+        return response()->json($this->formatIntake($intake->refresh()));
+    }
+
+    /**
      * Retry a failed intake.
      */
     public function retry(Request $request, DocumentIntake $intake): JsonResponse
@@ -177,14 +209,25 @@ class DocumentIntakeController extends Controller
             return [];
         }
 
+        $pages = $this->resolvePreviewPages($intake);
+        $scans = $intake->getMedia('scans');
+
+        if ($scans->isEmpty() && $intake->document instanceof Document) {
+            $scans = $intake->document->getMedia('scans');
+        }
+
         return [
             'id' => $intake->id,
             'status' => $intake->status,
             'document_id' => $intake->document_id,
             'original_name' => $intake->original_name,
+            'title' => data_get($intake->fields, 'title'),
             'storage_type' => $intake->storage_type,
-            'preview_url' => $this->resolvePreviewUrl($intake),
-            'preview_full_url' => $this->resolvePreviewFullUrl($intake),
+            'preview_url' => $pages[0]['thumb_url'] ?? null,
+            'preview_full_url' => $pages[0]['url'] ?? null,
+            'pages' => $pages,
+            'scans_count' => $scans->count(),
+            'scans_size' => $scans->sum('size'),
             'fields' => $intake->fields,
             'extracted_text' => $intake->extracted_text,
             'extracted_content' => $intake->extracted_content,
@@ -197,66 +240,61 @@ class DocumentIntakeController extends Controller
         ];
     }
 
-    private function resolvePreviewUrl(DocumentIntake $intake): ?string
+    /**
+     * @return array<int, array{id:int, page:int, url:string, thumb_url:string|null}>
+     */
+    private function resolvePreviewPages(DocumentIntake $intake): array
     {
         $expiration = now()->addMinutes(30);
+        $pages = $intake->getMedia('pages')
+            ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
+            ->values();
 
-        foreach ([['pages', 'thumb'], ['pages', ''], ['scans', 'thumb'], ['scans', '']] as [$collection, $conversion]) {
-            $media = $collection === 'scans'
-                ? $intake->getMedia($collection)
-                    ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
-                : $intake->getFirstMedia($collection);
-
-            if (! $media) {
-                continue;
-            }
-
-            $conversionName = $conversion;
-
-            if ($conversionName !== '' && ! $media->hasGeneratedConversion($conversionName)) {
-                $conversionName = '';
-            }
-
-            try {
-                if (Storage::disk($media->disk)->providesTemporaryUrls()) {
-                    return $media->getTemporaryUrl($expiration, $conversionName);
-                }
-            } catch (Throwable) {
-                // Fallback below when disk doesn't support temporary URLs in tests.
-            }
-
-            return $media->getUrl($conversionName);
+        if ($pages->isEmpty() && $intake->document instanceof Document) {
+            $pages = $intake->document->getMedia('pages')
+                ->sortBy(fn (Media $page) => (int) $page->getCustomProperty('page'))
+                ->values();
         }
 
-        return null;
+        if ($pages->isEmpty()) {
+            $pages = $intake->getMedia('scans')
+                ->filter(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                ->values();
+        }
+
+        if ($pages->isEmpty() && $intake->document instanceof Document) {
+            $pages = $intake->document->getMedia('scans')
+                ->filter(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
+                ->values();
+        }
+
+        return $pages->map(function (Media $media, int $index) use ($expiration) {
+            $pageNumber = (int) $media->getCustomProperty('page', $index + 1);
+            $url = $this->resolveMediaUrl($media, $expiration);
+            $thumbUrl = $media->hasGeneratedConversion('thumb')
+                ? $this->resolveMediaUrl($media, $expiration, 'thumb')
+                : $url;
+
+            return [
+                'id' => $media->id,
+                'page' => $pageNumber,
+                'url' => $url,
+                'thumb_url' => $thumbUrl !== $url ? $thumbUrl : null,
+            ];
+        })->all();
     }
 
-    private function resolvePreviewFullUrl(DocumentIntake $intake): ?string
+    private function resolveMediaUrl(Media $media, \DateTimeInterface $expiration, string $conversionName = ''): string
     {
-        $expiration = now()->addMinutes(30);
-
-        foreach ([['pages', ''], ['scans', '']] as [$collection, $conversion]) {
-            $media = $collection === 'scans'
-                ? $intake->getMedia($collection)
-                    ->first(fn (Media $item) => Str::startsWith((string) $item->mime_type, 'image/'))
-                : $intake->getFirstMedia($collection);
-
-            if (! $media) {
-                continue;
+        try {
+            if (Storage::disk($media->disk)->providesTemporaryUrls()) {
+                return $media->getTemporaryUrl($expiration, $conversionName);
             }
-
-            try {
-                if (Storage::disk($media->disk)->providesTemporaryUrls()) {
-                    return $media->getTemporaryUrl($expiration, $conversion);
-                }
-            } catch (Throwable) {
-                // Fallback below when disk doesn't support temporary URLs in tests.
-            }
-
-            return $media->getUrl($conversion);
+        } catch (Throwable) {
+            // Fallback below when disk doesn't support temporary URLs in tests.
         }
 
-        return null;
+        return $media->getUrl($conversionName);
     }
 
     /**

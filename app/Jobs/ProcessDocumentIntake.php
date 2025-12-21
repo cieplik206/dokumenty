@@ -135,4 +135,25 @@ class ProcessDocumentIntake implements ShouldQueue
             throw $error;
         }
     }
+
+    public function failed(Throwable $exception): void
+    {
+        $intake = $this->intake->fresh();
+
+        if (! $intake instanceof DocumentIntake) {
+            return;
+        }
+
+        if ($intake->status === DocumentIntake::STATUS_DONE) {
+            return;
+        }
+
+        $message = $exception->getMessage();
+
+        $intake->forceFill([
+            'status' => DocumentIntake::STATUS_FAILED,
+            'error_message' => $message !== '' ? $message : 'Analiza zakonczona niepowodzeniem.',
+            'finished_at' => now(),
+        ])->save();
+    }
 }

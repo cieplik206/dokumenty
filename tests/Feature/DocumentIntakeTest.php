@@ -15,7 +15,7 @@ use Prism\Prism\Text\Response as TextResponse;
 use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
 
-test('document intake queues analysis for each file', function () {
+test('document intake creates an upload record for each file', function () {
     Storage::fake('private');
     Queue::fake();
 
@@ -36,9 +36,9 @@ test('document intake queues analysis for each file', function () {
     $intakes = DocumentIntake::query()->get();
 
     expect($intakes)->toHaveCount(2)
-        ->and($intakes->first()->status)->toBe(DocumentIntake::STATUS_QUEUED);
+        ->and($intakes->first()->status)->toBe(DocumentIntake::STATUS_UPLOADED);
 
-    Queue::assertPushed(ProcessDocumentIntake::class, 2);
+    Queue::assertNothingPushed();
 });
 
 test('document intake index returns bulk payload', function () {
@@ -56,6 +56,31 @@ test('document intake index returns bulk payload', function () {
         ->assertJsonCount(2, 'items')
         ->assertJsonFragment(['id' => $intake->id, 'status' => DocumentIntake::STATUS_DONE])
         ->assertJsonFragment(['id' => $failed->id, 'status' => DocumentIntake::STATUS_FAILED]);
+});
+
+test('document intake can be started manually', function () {
+    Queue::fake();
+
+    $intake = DocumentIntake::factory()->create([
+        'status' => DocumentIntake::STATUS_UPLOADED,
+    ]);
+
+    $response = $this
+        ->actingAs($intake->user)
+        ->postJson(route('documents.intake.start', $intake));
+
+    $response
+        ->assertOk()
+        ->assertJsonFragment([
+            'id' => $intake->id,
+            'status' => DocumentIntake::STATUS_QUEUED,
+        ]);
+
+    $intake->refresh();
+
+    expect($intake->status)->toBe(DocumentIntake::STATUS_QUEUED);
+
+    Queue::assertPushed(ProcessDocumentIntake::class);
 });
 
 test('document intake can be finalized as paper', function () {
@@ -205,6 +230,19 @@ test('pdf page thumbnails are available after moving to document', function () {
 
     expect($firstPage)->not->toBeNull()
         ->and(file_exists($firstPage->getPath('thumb')))->toBeTrue();
+});
+
+test('job failure marks intake as failed', function () {
+    $intake = DocumentIntake::factory()->processing()->create();
+    $job = new ProcessDocumentIntake($intake);
+
+    $job->failed(new Exception('Boom'));
+
+    $intake->refresh();
+
+    expect($intake->status)->toBe(DocumentIntake::STATUS_FAILED)
+        ->and($intake->error_message)->toBe('Boom')
+        ->and($intake->finished_at)->not->toBeNull();
 });
 
 function makeTestPdfPath(): string
