@@ -55,6 +55,7 @@ class StoreDocumentRequest extends FormRequest
             'tags' => ['nullable', 'string', 'max:1000'],
             'extracted_content' => ['nullable', 'array'],
             'ai_metadata' => ['nullable', 'array'],
+            'intake_id' => ['nullable', 'integer', 'exists:document_intakes,id'],
             'scans' => ['nullable', 'array'],
             'scans.*' => ['file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ];
@@ -80,6 +81,7 @@ class StoreDocumentRequest extends FormRequest
             'received_at.date' => 'Data otrzymania musi byc poprawna data.',
             'notes.max' => 'Notatki moga miec maksymalnie 4000 znakow.',
             'tags.max' => 'Tagi moga miec maksymalnie 1000 znakow.',
+            'intake_id.exists' => 'Nie znaleziono paczki skanow do analizy.',
             'scans.array' => 'Skan musi byc lista plikow.',
             'scans.*.file' => 'Kazdy skan musi byc plikiem.',
             'scans.*.mimes' => 'Dozwolone formaty skanow: pdf, jpg, jpeg, png.',

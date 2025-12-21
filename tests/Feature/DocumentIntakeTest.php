@@ -1,68 +1,48 @@
 <?php
 
+use App\Jobs\ProcessDocumentIntake;
+use App\Models\DocumentIntake;
 use App\Models\User;
-use Illuminate\Cookie\CookieValuePrefix;
-use Illuminate\Cookie\Middleware\EncryptCookies;
-use Illuminate\Support\Str;
-use Prism\Prism\Enums\FinishReason;
-use Prism\Prism\Facades\Prism;
-use Prism\Prism\Text\Response as TextResponse;
-use Prism\Prism\ValueObjects\Meta;
-use Prism\Prism\ValueObjects\Usage;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 
-test('document intake streams ai response', function () {
-    $fake = Prism::fake([
-        new TextResponse(
-            steps: collect([]),
-            text: '{"type":"done"}',
-            finishReason: FinishReason::Stop,
-            toolCalls: [],
-            toolResults: [],
-            usage: new Usage(1, 1),
-            meta: new Meta('fake', 'fake-model'),
-            messages: collect([]),
-        ),
-    ]);
+test('document intake queues analysis', function () {
+    Storage::fake('private');
+    Queue::fake();
 
     $user = User::factory()->create();
-    $csrfToken = Str::random(40);
-    $encryptedToken = app('encrypter')->encrypt(
-        CookieValuePrefix::create('XSRF-TOKEN', app('encrypter')->getKey()).$csrfToken,
-        EncryptCookies::serialized('XSRF-TOKEN')
-    );
-
-    $pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
+    $scan = UploadedFile::fake()->image('scan.png', 10, 10);
 
     $response = $this
         ->actingAs($user)
-        ->withSession(['_token' => $csrfToken])
-        ->withHeader('X-XSRF-TOKEN', $encryptedToken)
-        ->postJson(route('documents.intake'), [
-            'messages' => [
-                [
-                    'role' => 'user',
-                    'parts' => [
-                        [
-                            'type' => 'file',
-                            'url' => "data:image/png;base64,{$pngBase64}",
-                            'mediaType' => 'image/png',
-                        ],
-                    ],
-                ],
-            ],
+        ->post(route('documents.intake'), [
+            'scans' => [$scan],
         ]);
 
-    $response->assertSuccessful();
-    $response->assertHeader('x-vercel-ai-ui-message-stream', 'v1');
+    $response->assertAccepted();
 
-    $streamedContent = $response->streamedContent();
+    $intake = DocumentIntake::query()->first();
 
-    $fake->assertRequest(function (array $requests): void {
-        expect($requests)->toHaveCount(1);
-        expect($requests[0]->clientOptions())->toMatchArray(['timeout' => 300]);
+    expect($intake)->not->toBeNull()
+        ->and($intake->status)->toBe(DocumentIntake::STATUS_QUEUED);
+
+    Queue::assertPushed(ProcessDocumentIntake::class, function (ProcessDocumentIntake $job) use ($intake) {
+        return $job->intake->is($intake);
     });
+});
 
-    expect($streamedContent)
-        ->toContain('"text-delta"')
-        ->toContain('[DONE]');
+test('document intake status returns payload', function () {
+    $intake = DocumentIntake::factory()->done()->create();
+
+    $response = $this
+        ->actingAs($intake->user)
+        ->getJson(route('documents.intake.show', $intake));
+
+    $response
+        ->assertOk()
+        ->assertJson([
+            'id' => $intake->id,
+            'status' => DocumentIntake::STATUS_DONE,
+        ]);
 });

@@ -2,6 +2,7 @@
 
 namespace App\Actions\Documents;
 
+use App\Models\DocumentIntake;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
@@ -10,9 +11,8 @@ use Prism\Prism\Enums\Provider;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\ValueObjects\Media\Image;
 use RuntimeException;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 
-class StreamDocumentIntake
+class AnalyzeDocumentIntake
 {
     private const MAX_IMAGES = 10;
 
@@ -21,12 +21,17 @@ class StreamDocumentIntake
     private bool $pdftoppmResolved = false;
 
     /**
-     * @param  Collection<int, array<string, mixed>>  $fileParts
      * @param  Collection<int, array<string, mixed>>  $categories
+     * @return array{
+     *     fields: array<string, mixed>|null,
+     *     extracted_text: string|null,
+     *     extracted_content: array<string, mixed>|null,
+     *     metadata: array<string, mixed>|null
+     * }
      */
-    public function __invoke(Collection $fileParts, Collection $categories): StreamedResponse
+    public function __invoke(DocumentIntake $intake, Collection $categories): array
     {
-        $images = $this->buildImages($fileParts);
+        $images = $this->buildImages($intake);
 
         if ($images === []) {
             throw ValidationException::withMessages([
@@ -34,12 +39,14 @@ class StreamDocumentIntake
             ]);
         }
 
-        return Prism::text()
+        $response = Prism::text()
             ->using(Provider::OpenAI, 'gpt-5-mini')
             ->withSystemPrompt($this->systemPrompt())
             ->withPrompt($this->userPrompt($categories), $images)
             ->withClientOptions(['timeout' => 300])
-            ->asDataStreamResponse();
+            ->asText();
+
+        return $this->parseNdjson($response->text);
     }
 
     private function systemPrompt(): string
@@ -92,121 +99,53 @@ PROMPT;
     }
 
     /**
-     * @param  Collection<int, array<string, mixed>>  $fileParts
      * @return array<int, Image>
      */
-    private function buildImages(Collection $fileParts): array
+    private function buildImages(DocumentIntake $intake): array
     {
         $images = [];
 
-        foreach ($fileParts as $filePart) {
+        foreach ($intake->getMedia('scans') as $media) {
             if (count($images) >= self::MAX_IMAGES) {
                 break;
             }
 
-            $mediaType = (string) ($filePart['mediaType'] ?? '');
-            $url = (string) ($filePart['url'] ?? '');
+            $mediaType = (string) ($media->mime_type ?? '');
+            $path = $media->getPath();
 
-            if ($mediaType === '' || $url === '') {
+            if ($mediaType === '' || $path === '') {
                 continue;
             }
 
             if (Str::startsWith($mediaType, 'image/')) {
-                $images[] = $this->imageFromUrl($url, $mediaType);
+                $images[] = Image::fromLocalPath($path);
 
                 continue;
             }
 
             if ($mediaType === 'application/pdf') {
                 $remaining = self::MAX_IMAGES - count($images);
-                $images = array_merge($images, $this->imagesFromPdf($url, $remaining));
+                $images = array_merge($images, $this->imagesFromPdf($path, $remaining));
             }
         }
 
         return $images;
     }
 
-    private function imageFromUrl(string $url, string $mediaType): Image
-    {
-        if (Str::startsWith($url, 'data:')) {
-            [$mimeType, $base64] = $this->parseDataUrl($url);
-
-            return Image::fromBase64($base64, $mimeType ?? $mediaType);
-        }
-
-        return Image::fromUrl($url, $mediaType);
-    }
-
-    /**
-     * @return array{0: string|null, 1: string}
-     */
-    private function parseDataUrl(string $url): array
-    {
-        $parts = explode(',', $url, 2);
-
-        if (count($parts) !== 2) {
-            throw new RuntimeException('Nieprawidlowy format data URL.');
-        }
-
-        $meta = $parts[0];
-        $data = $parts[1];
-
-        if (! Str::startsWith($meta, 'data:')) {
-            throw new RuntimeException('Nieprawidlowy format data URL.');
-        }
-
-        $meta = substr($meta, 5);
-        $metaParts = explode(';', $meta);
-        $mimeType = $metaParts[0] !== '' ? $metaParts[0] : null;
-
-        return [$mimeType, $data];
-    }
-
     /**
      * @return array<int, Image>
      */
-    private function imagesFromPdf(string $url, int $limit): array
+    private function imagesFromPdf(string $pdfPath, int $limit): array
     {
         if ($limit <= 0) {
             return [];
         }
 
-        if (! Str::startsWith($url, 'data:')) {
-            throw new RuntimeException('PDF musi byc przekazany jako data URL.');
+        if (! is_file($pdfPath)) {
+            throw new RuntimeException('Nie mozna odczytac pliku PDF.');
         }
 
-        [$mimeType, $base64] = $this->parseDataUrl($url);
-
-        if ($mimeType !== null && $mimeType !== 'application/pdf') {
-            throw new RuntimeException('Nieprawidlowy typ PDF.');
-        }
-
-        $pdfPath = $this->writeTempFile(base64_decode($base64, true), 'pdf');
-
-        try {
-            return $this->convertPdfToImages($pdfPath, $limit);
-        } finally {
-            @unlink($pdfPath);
-        }
-    }
-
-    private function writeTempFile(false|string $contents, string $extension): string
-    {
-        if ($contents === false) {
-            throw new RuntimeException('Nie mozna odczytac zawartosci pliku.');
-        }
-
-        $path = tempnam(sys_get_temp_dir(), 'doc-');
-
-        if ($path === false) {
-            throw new RuntimeException('Nie mozna utworzyc pliku tymczasowego.');
-        }
-
-        $finalPath = $path.'.'.$extension;
-        rename($path, $finalPath);
-        file_put_contents($finalPath, $contents);
-
-        return $finalPath;
+        return $this->convertPdfToImages($pdfPath, $limit);
     }
 
     /**
@@ -290,5 +229,71 @@ PROMPT;
         $this->pdftoppmBinary = null;
 
         return null;
+    }
+
+    /**
+     * @return array{
+     *     fields: array<string, mixed>|null,
+     *     extracted_text: string|null,
+     *     extracted_content: array<string, mixed>|null,
+     *     metadata: array<string, mixed>|null
+     * }
+     */
+    private function parseNdjson(string $output): array
+    {
+        $fields = [];
+        $extractedText = null;
+        $extractedContent = null;
+        $metadata = null;
+
+        $lines = preg_split('/\r\n|\r|\n/', trim($output)) ?: [];
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+
+            if ($trimmed === '') {
+                continue;
+            }
+
+            $payload = json_decode($trimmed, true);
+
+            if (json_last_error() !== JSON_ERROR_NONE || ! is_array($payload)) {
+                continue;
+            }
+
+            $type = $payload['type'] ?? null;
+
+            if ($type === 'field' && isset($payload['key'])) {
+                $fields[(string) $payload['key']] = $payload['value'] ?? null;
+
+                continue;
+            }
+
+            if ($type === 'extracted_text') {
+                $value = $payload['value'] ?? null;
+                $extractedText = is_string($value) ? $value : null;
+
+                continue;
+            }
+
+            if ($type === 'extracted_content') {
+                $value = $payload['value'] ?? null;
+                $extractedContent = is_array($value) ? $value : null;
+
+                continue;
+            }
+
+            if ($type === 'metadata') {
+                $value = $payload['value'] ?? null;
+                $metadata = is_array($value) ? $value : null;
+            }
+        }
+
+        return [
+            'fields' => $fields === [] ? null : $fields,
+            'extracted_text' => $extractedText,
+            'extracted_content' => $extractedContent,
+            'metadata' => $metadata,
+        ];
     }
 }

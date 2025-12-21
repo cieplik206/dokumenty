@@ -11,8 +11,6 @@ import bindersRoutes from '@/routes/binders';
 import categoriesRoutes from '@/routes/categories';
 import documentsRoutes from '@/routes/documents';
 import { type BreadcrumbItem } from '@/types';
-import { Chat } from '@ai-sdk/vue';
-import { DefaultChatTransport } from 'ai';
 import { Form, Head, Link } from '@inertiajs/vue3';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
@@ -25,6 +23,8 @@ interface CategoryOption {
     id: number;
     name: string;
 }
+
+type IntakeStatus = 'idle' | 'queued' | 'processing' | 'done' | 'failed';
 
 const props = defineProps<{
     binders: BinderOption[];
@@ -85,28 +85,6 @@ const getXsrfToken = (): string | null => {
     return match ? decodeURIComponent(match[1]) : null;
 };
 
-const chat = new Chat({
-    messages: [],
-    transport: new DefaultChatTransport({
-        api: intakeUrl,
-        credentials: 'same-origin',
-        headers: () => {
-            const token = getXsrfToken();
-            const headers: Record<string, string> = {
-                Accept: 'application/json, text/event-stream',
-                'X-Requested-With': 'XMLHttpRequest',
-            };
-
-            if (token) {
-                headers['X-XSRF-TOKEN'] = token;
-            }
-
-            return headers;
-        },
-    }),
-});
-
-const aiHasRun = ref(false);
 const aiErrorMessage = ref<string | null>(null);
 const aiExtractedText = ref('');
 const aiExtractedContent = ref<Record<string, unknown> | null>(null);
@@ -115,62 +93,46 @@ const aiCategoryMatchName = ref<string | null>(null);
 const aiCategorySuggestion = ref<string | null>(null);
 
 const lastScans = ref<File[]>([]);
-const streamBuffer = ref('');
-const processedLength = ref(0);
+const scansInput = ref<HTMLInputElement | null>(null);
+const isDragging = ref(false);
+const selectedScansCount = ref(0);
 
-const assistantMessage = computed(() => {
-    return [...chat.messages].reverse().find((message) => message.role === 'assistant');
-});
+const intakeId = ref<number | null>(null);
+const intakeStatus = ref<IntakeStatus>('idle');
+const intakeCreatedAt = ref<string | null>(null);
+const intakeStartedAt = ref<string | null>(null);
+const intakeFinishedAt = ref<string | null>(null);
+const intakeElapsedSeconds = ref(0);
+let pollingTimer: number | null = null;
+let elapsedTimer: number | null = null;
 
-const assistantText = computed(() => {
-    if (!assistantMessage.value) {
-        return '';
-    }
-
-    return assistantMessage.value.parts
-        .filter((part) => part.type === 'text')
-        .map((part) => part.text ?? '')
-        .join('');
-});
-
-const reasoningText = computed(() => {
-    if (!assistantMessage.value) {
-        return '';
-    }
-
-    return assistantMessage.value.parts
-        .filter((part) => part.type === 'reasoning')
-        .map((part) => part.text ?? '')
-        .join('');
-});
-
-const toolParts = computed(() => {
-    if (!assistantMessage.value) {
-        return [];
-    }
-
-    return assistantMessage.value.parts.filter((part) => {
-        return (
-            typeof part.type === 'string' &&
-            (part.type.startsWith('tool-') || part.type === 'dynamic-tool')
-        );
-    });
+const isIntakePending = computed(() => {
+    return intakeStatus.value === 'queued' || intakeStatus.value === 'processing';
 });
 
 const aiStatusLabel = computed(() => {
-    if (chat.status === 'submitted') {
-        return 'Wysylanie skanow';
+    if (intakeStatus.value === 'queued') {
+        return 'W kolejce';
     }
 
-    if (chat.status === 'streaming') {
+    if (intakeStatus.value === 'processing') {
         return 'Analiza w toku';
     }
 
-    if (chat.status === 'error') {
+    if (intakeStatus.value === 'failed') {
         return 'Blad analizy';
     }
 
-    return aiHasRun.value ? 'Zakonczono' : 'Gotowe';
+    return intakeStatus.value === 'done' ? 'Zakonczono' : 'Gotowe';
+});
+
+const intakeElapsedLabel = computed(() => {
+    const minutes = Math.floor(intakeElapsedSeconds.value / 60)
+        .toString()
+        .padStart(2, '0');
+    const seconds = (intakeElapsedSeconds.value % 60).toString().padStart(2, '0');
+
+    return `${minutes}:${seconds}`;
 });
 
 const extractedContentPayload = computed(() => {
@@ -181,16 +143,68 @@ const aiMetadataPayload = computed(() => {
     return aiMetadata.value ? JSON.stringify(aiMetadata.value) : '';
 });
 
-const scansInput = ref<HTMLInputElement | null>(null);
-const isDragging = ref(false);
-const selectedScansCount = ref(0);
+const buildHeaders = (): Record<string, string> => {
+    const token = getXsrfToken();
+    const headers: Record<string, string> = {
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+    };
+
+    if (token) {
+        headers['X-XSRF-TOKEN'] = token;
+    }
+
+    return headers;
+};
+
+const stopPolling = (): void => {
+    if (pollingTimer === null) {
+        return;
+    }
+
+    window.clearTimeout(pollingTimer);
+    pollingTimer = null;
+};
+
+const stopElapsedTimer = (): void => {
+    if (elapsedTimer === null) {
+        return;
+    }
+
+    window.clearInterval(elapsedTimer);
+    elapsedTimer = null;
+};
+
+const updateElapsed = (): void => {
+    const start = intakeStartedAt.value ?? intakeCreatedAt.value;
+
+    if (!start) {
+        intakeElapsedSeconds.value = 0;
+        return;
+    }
+
+    const diff = Math.max(0, Date.now() - new Date(start).getTime());
+    intakeElapsedSeconds.value = Math.floor(diff / 1000);
+};
+
+const startElapsedTimer = (): void => {
+    if (elapsedTimer !== null) {
+        return;
+    }
+
+    updateElapsed();
+    elapsedTimer = window.setInterval(updateElapsed, 1000);
+};
 
 const resetIntakeState = (): void => {
-    chat.stop();
-    chat.messages = [];
-    processedLength.value = 0;
-    streamBuffer.value = '';
-    aiHasRun.value = false;
+    stopPolling();
+    stopElapsedTimer();
+    intakeId.value = null;
+    intakeStatus.value = 'idle';
+    intakeCreatedAt.value = null;
+    intakeStartedAt.value = null;
+    intakeFinishedAt.value = null;
+    intakeElapsedSeconds.value = 0;
     aiErrorMessage.value = null;
     aiExtractedText.value = '';
     aiExtractedContent.value = null;
@@ -262,56 +276,124 @@ const applyFieldUpdate = (key: string, value: unknown): void => {
     }
 };
 
-const processStreamLine = (line: string): void => {
-    const trimmed = line.trim();
+const applyIntakePayload = (payload: Record<string, unknown>): void => {
+    if (typeof payload.status === 'string') {
+        intakeStatus.value = payload.status as IntakeStatus;
+    }
 
-    if (trimmed === '') {
+    if (typeof payload.id === 'number') {
+        intakeId.value = payload.id;
+    }
+
+    if (typeof payload.created_at === 'string') {
+        intakeCreatedAt.value = payload.created_at;
+    }
+
+    if (typeof payload.started_at === 'string') {
+        intakeStartedAt.value = payload.started_at;
+    }
+
+    if (typeof payload.finished_at === 'string') {
+        intakeFinishedAt.value = payload.finished_at;
+    }
+
+    if (typeof payload.error_message === 'string') {
+        aiErrorMessage.value = payload.error_message;
+    }
+
+    if (payload.fields && typeof payload.fields === 'object') {
+        Object.entries(payload.fields as Record<string, unknown>).forEach(([key, value]) => {
+            applyFieldUpdate(key, value);
+        });
+    }
+
+    if ('extracted_text' in payload) {
+        aiExtractedText.value = typeof payload.extracted_text === 'string' ? payload.extracted_text : '';
+    }
+
+    if ('extracted_content' in payload) {
+        aiExtractedContent.value =
+            payload.extracted_content && typeof payload.extracted_content === 'object'
+                ? (payload.extracted_content as Record<string, unknown>)
+                : null;
+    }
+
+    if ('metadata' in payload) {
+        aiMetadata.value =
+            payload.metadata && typeof payload.metadata === 'object'
+                ? (payload.metadata as Record<string, unknown>)
+                : null;
+    }
+
+    if (isIntakePending.value) {
+        startElapsedTimer();
+        return;
+    }
+
+    stopElapsedTimer();
+};
+
+const parseErrorMessage = async (response: Response): Promise<string> => {
+    try {
+        const payload = await response.json();
+
+        if (payload?.message) {
+            return payload.message;
+        }
+
+        if (payload?.errors?.scans?.[0]) {
+            return payload.errors.scans[0];
+        }
+    } catch {
+        // ignore invalid JSON
+    }
+
+    return 'Nie udalo sie uruchomic analizy.';
+};
+
+const pollIntakeStatus = async (): Promise<void> => {
+    if (!intakeId.value) {
         return;
     }
 
     try {
-        const payload = JSON.parse(trimmed) as {
-            type?: string;
-            key?: string;
-            value?: unknown;
-        };
+        const response = await fetch(`${intakeUrl}/${intakeId.value}`, {
+            headers: buildHeaders(),
+            credentials: 'same-origin',
+        });
 
-        if (!payload?.type) {
-            return;
+        if (!response.ok) {
+            throw new Error('Nie udalo sie pobrac statusu analizy.');
         }
 
-        if (payload.type === 'field' && payload.key) {
-            applyFieldUpdate(payload.key, payload.value);
-            return;
-        }
+        const payload = (await response.json()) as Record<string, unknown>;
+        applyIntakePayload(payload);
+    } catch (error) {
+        aiErrorMessage.value =
+            error instanceof Error ? error.message : 'Nie udalo sie pobrac statusu analizy.';
+        stopPolling();
+        return;
+    }
 
-        if (payload.type === 'extracted_text') {
-            aiExtractedText.value = typeof payload.value === 'string' ? payload.value : '';
-            return;
-        }
-
-        if (payload.type === 'extracted_content') {
-            if (payload.value && typeof payload.value === 'object') {
-                aiExtractedContent.value = payload.value as Record<string, unknown>;
-            }
-            return;
-        }
-
-        if (payload.type === 'metadata') {
-            if (payload.value && typeof payload.value === 'object') {
-                aiMetadata.value = payload.value as Record<string, unknown>;
-            }
-        }
-    } catch {
-        // Ignore malformed lines until more chunks arrive.
+    if (isIntakePending.value) {
+        pollingTimer = window.setTimeout(pollIntakeStatus, 2000);
+    } else {
+        stopPolling();
     }
 };
 
-const processStreamBuffer = (): void => {
-    const lines = streamBuffer.value.split('\n');
-    streamBuffer.value = lines.pop() ?? '';
+const startPolling = (): void => {
+    stopPolling();
 
-    lines.forEach(processStreamLine);
+    if (isIntakePending.value) {
+        pollingTimer = window.setTimeout(pollIntakeStatus, 2000);
+    }
+};
+
+const clearScansInput = (): void => {
+    if (scansInput.value) {
+        scansInput.value.value = '';
+    }
 };
 
 const buildFileList = (files: File[]): FileList => {
@@ -328,17 +410,32 @@ const startIntake = async (files: FileList | null): Promise<void> => {
     touchedFields.clear();
     categoryTouched.value = false;
     resetIntakeState();
-    aiHasRun.value = true;
+    intakeStatus.value = 'queued';
     lastScans.value = Array.from(files);
 
+    const formData = new FormData();
+    Array.from(files).forEach((file) => formData.append('scans[]', file));
+
     try {
-        await chat.sendMessage({
-            files,
-            text: 'Przeanalizuj dokument.',
+        const response = await fetch(intakeUrl, {
+            method: 'POST',
+            body: formData,
+            headers: buildHeaders(),
+            credentials: 'same-origin',
         });
+
+        if (!response.ok) {
+            throw new Error(await parseErrorMessage(response));
+        }
+
+        const payload = (await response.json()) as Record<string, unknown>;
+        applyIntakePayload(payload);
+        startPolling();
     } catch (error) {
         aiErrorMessage.value =
             error instanceof Error ? error.message : 'Nie udalo sie uruchomic analizy.';
+    } finally {
+        clearScansInput();
     }
 };
 
@@ -350,43 +447,6 @@ const retryIntake = (): void => {
     void startIntake(buildFileList(lastScans.value));
 };
 
-watch(assistantText, (nextValue) => {
-    const delta = nextValue.slice(processedLength.value);
-
-    if (delta.length === 0) {
-        return;
-    }
-
-    processedLength.value = nextValue.length;
-    streamBuffer.value += delta;
-    processStreamBuffer();
-});
-
-watch(
-    () => chat.status,
-    (status) => {
-        if (status !== 'ready') {
-            return;
-        }
-
-        const remaining = streamBuffer.value.trim();
-
-        if (remaining === '') {
-            return;
-        }
-
-        processStreamLine(remaining);
-        streamBuffer.value = '';
-    },
-);
-
-watch(
-    () => chat.error,
-    (error) => {
-        aiErrorMessage.value = error?.message ?? null;
-    },
-);
-
 watch(binderId, (value) => {
     if (isPaper.value) {
         lastPaperBinderId.value = value;
@@ -394,7 +454,8 @@ watch(binderId, (value) => {
 });
 
 onBeforeUnmount(() => {
-    chat.stop();
+    stopPolling();
+    stopElapsedTimer();
 });
 
 const updateSelectedScans = (files: FileList | null): void => {
@@ -443,6 +504,7 @@ const breadcrumbs: BreadcrumbItem[] = [
     },
 ];
 </script>
+
 
 <template>
     <Head title="Nowy dokument" />
@@ -496,6 +558,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                         :value="extractedContentPayload"
                     />
                     <input type="hidden" name="ai_metadata" :value="aiMetadataPayload" />
+                    <input type="hidden" name="intake_id" :value="intakeId ?? ''" />
                     <input
                         type="hidden"
                         name="is_paper"
@@ -725,7 +788,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                     </div>
 
                     <div class="flex items-center gap-2">
-                        <Button :disabled="processing">Zapisz</Button>
+                        <Button :disabled="processing || isIntakePending">Zapisz</Button>
                         <Button as-child variant="ghost">
                             <Link :href="documentsRoutes.index().url">Anuluj</Link>
                         </Button>
@@ -739,12 +802,18 @@ const breadcrumbs: BreadcrumbItem[] = [
                             <p class="text-xs text-muted-foreground">
                                 Status: {{ aiStatusLabel }}
                             </p>
+                            <p
+                                v-if="isIntakePending"
+                                class="text-xs text-muted-foreground"
+                            >
+                                Czas oczekiwania: {{ intakeElapsedLabel }}
+                            </p>
                         </div>
                         <Button
                             type="button"
                             size="sm"
                             variant="outline"
-                            :disabled="chat.status === 'streaming' || lastScans.length === 0"
+                            :disabled="isIntakePending || lastScans.length === 0"
                             @click="retryIntake"
                         >
                             Ponow
@@ -770,7 +839,7 @@ const breadcrumbs: BreadcrumbItem[] = [
                             >
                                 {{
                                     aiExtractedText ||
-                                    (chat.status === 'streaming'
+                                    (isIntakePending
                                         ? 'Trwa ekstrakcja...'
                                         : 'Brak danych')
                                 }}
@@ -781,56 +850,18 @@ const breadcrumbs: BreadcrumbItem[] = [
                             <p
                                 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                             >
-                                Strumien (NDJSON)
+                                Wyciagniete dane
                             </p>
                             <div
                                 class="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border bg-background/60 p-3 text-xs text-muted-foreground"
                             >
-                                {{ assistantText || '—' }}
-                            </div>
-                        </div>
-
-                        <div v-if="reasoningText" class="flex flex-col gap-2">
-                            <p
-                                class="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                            >
-                                Reasoning
-                            </p>
-                            <div
-                                class="max-h-32 overflow-auto whitespace-pre-wrap rounded-lg border bg-background/60 p-3 text-xs text-muted-foreground"
-                            >
-                                {{ reasoningText }}
-                            </div>
-                        </div>
-
-                        <div v-if="toolParts.length" class="flex flex-col gap-2">
-                            <p
-                                class="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                            >
-                                Tool calls
-                            </p>
-                            <div class="flex flex-col gap-2">
-                                <div
-                                    v-for="(toolPart, index) in toolParts"
-                                    :key="toolPart.toolCallId ?? index"
-                                    class="flex flex-col gap-1 rounded-lg border bg-background/60 p-3 text-xs"
-                                >
-                                    <p class="font-medium text-foreground">
-                                        {{ toolPart.toolName ?? toolPart.type }}
-                                    </p>
-                                    <p class="text-muted-foreground">
-                                        Stan: {{ toolPart.state ?? '—' }}
-                                    </p>
-                                    <div class="whitespace-pre-wrap text-muted-foreground">
-                                        {{
-                                            JSON.stringify(
-                                                toolPart.input ?? toolPart.output ?? {},
-                                                null,
-                                                2,
-                                            )
-                                        }}
-                                    </div>
-                                </div>
+                                {{
+                                    aiExtractedContent
+                                        ? JSON.stringify(aiExtractedContent, null, 2)
+                                        : isIntakePending
+                                          ? 'Trwa analiza...'
+                                          : 'Brak danych'
+                                }}
                             </div>
                         </div>
 

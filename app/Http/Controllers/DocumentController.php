@@ -8,6 +8,7 @@ use App\Http\Requests\UpdateDocumentRequest;
 use App\Models\Binder;
 use App\Models\Category;
 use App\Models\Document;
+use App\Models\DocumentIntake;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -99,6 +100,26 @@ class DocumentController extends Controller
     {
         $data = $request->validated();
         $scans = $request->file('scans', []);
+        $intake = null;
+
+        if (! empty($data['intake_id'])) {
+            $intake = DocumentIntake::query()
+                ->whereKey($data['intake_id'])
+                ->where('user_id', $request->user()->id)
+                ->first();
+
+            if (! $intake) {
+                return back()
+                    ->withErrors(['scans' => 'Nie znaleziono paczki skanow do analizy.'])
+                    ->withInput();
+            }
+
+            if ($intake->status !== DocumentIntake::STATUS_DONE) {
+                return back()
+                    ->withErrors(['scans' => 'Poczekaj na zakonczenie analizy skanu.'])
+                    ->withInput();
+            }
+        }
 
         $isPaper = filter_var($data['is_paper'] ?? true, FILTER_VALIDATE_BOOLEAN);
 
@@ -106,9 +127,23 @@ class DocumentController extends Controller
             $data['binder_id'] = null;
         }
 
-        unset($data['scans'], $data['is_paper']);
+        unset($data['scans'], $data['is_paper'], $data['intake_id']);
+
+        if ($intake instanceof DocumentIntake) {
+            $data['extracted_content'] ??= $intake->extracted_content;
+            $data['ai_metadata'] ??= $intake->ai_metadata;
+            $scans = [];
+        }
 
         $document = Document::create($data);
+
+        if ($intake instanceof DocumentIntake) {
+            foreach ($intake->getMedia('scans') as $media) {
+                $media->move($document, 'scans');
+            }
+
+            $intake->delete();
+        }
 
         foreach ($scans as $scan) {
             $document->addMedia($scan)
