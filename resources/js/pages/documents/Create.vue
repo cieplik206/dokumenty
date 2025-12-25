@@ -92,6 +92,7 @@ const uploads = ref<IntakeItem[]>(
 );
 const selectionState = reactive<Record<number, { paperMode: boolean; binderId: number | null }>>({});
 const actionBusy = reactive<Record<number, boolean>>({});
+const bulkRemoveBusy = ref(false);
 const previewItem = ref<IntakeItem | null>(null);
 const isPreviewOpen = ref(false);
 const activePreviewIndex = ref(0);
@@ -461,6 +462,49 @@ const removeIntake = async (item: IntakeItem): Promise<void> => {
     }
 };
 
+const removeAllIntakes = async (): Promise<void> => {
+    if (uploads.value.length === 0) {
+        return;
+    }
+
+    if (!window.confirm('Usunac wszystkie analizy z listy?')) {
+        return;
+    }
+
+    bulkRemoveBusy.value = true;
+
+    try {
+        const response = await fetch(intakeUrl, {
+            method: 'DELETE',
+            headers: {
+                ...buildHeaders(),
+                'Content-Type': 'application/json',
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                ids: uploads.value.map((item) => item.id),
+            }),
+        });
+
+        if (!response.ok && response.status !== 204) {
+            throw new Error(await parseErrorMessage(response));
+        }
+
+        uploads.value = [];
+        Object.keys(selectionState).forEach((key) => {
+            delete selectionState[Number(key)];
+        });
+        Object.keys(actionBusy).forEach((key) => {
+            delete actionBusy[Number(key)];
+        });
+    } catch (error) {
+        uploadError.value =
+            error instanceof Error ? error.message : 'Nie udalo sie usunac analiz.';
+    } finally {
+        bulkRemoveBusy.value = false;
+    }
+};
+
 const openPreview = (item: IntakeItem): void => {
     if (item.pages.length === 0 && !item.preview_full_url) {
         return;
@@ -575,7 +619,18 @@ const breadcrumbs: BreadcrumbItem[] = [
                 </div>
 
                 <div class="grid gap-3">
-                    <p class="text-sm font-semibold">Lista analiz</p>
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <p class="text-sm font-semibold">Lista analiz</p>
+                        <Button
+                            v-if="uploads.length > 0"
+                            size="sm"
+                            variant="destructive"
+                            :disabled="bulkRemoveBusy"
+                            @click="removeAllIntakes"
+                        >
+                            Usun wszystkie
+                        </Button>
+                    </div>
 
                     <div
                         v-if="uploads.length === 0"
@@ -650,7 +705,6 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         Ponow
                                     </Button>
                                     <Button
-                                        v-if="item.status !== 'finalized'"
                                         size="sm"
                                         variant="ghost"
                                         :disabled="actionBusy[item.id]"

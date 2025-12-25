@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Actions\Documents\DocumentIntakePageGenerator;
+use App\Http\Requests\DocumentIntakeBulkDestroyRequest;
 use App\Http\Requests\DocumentIntakeFinalizeRequest;
 use App\Http\Requests\DocumentIntakeIndexRequest;
 use App\Http\Requests\DocumentIntakeRequest;
@@ -176,6 +177,26 @@ class DocumentIntakeController extends Controller
     }
 
     /**
+     * Remove intake requests in bulk.
+     */
+    public function destroyBulk(DocumentIntakeBulkDestroyRequest $request): JsonResponse
+    {
+        $user = $request->user();
+        $ids = $request->validated('ids');
+
+        $intakes = DocumentIntake::query()
+            ->where('user_id', $user->id)
+            ->whereIn('id', $ids)
+            ->get();
+
+        foreach ($intakes as $intake) {
+            $this->deleteIntake($intake);
+        }
+
+        return response()->json([], 204);
+    }
+
+    /**
      * Remove an intake request.
      */
     public function destroy(Request $request, DocumentIntake $intake): JsonResponse
@@ -184,18 +205,7 @@ class DocumentIntakeController extends Controller
             abort(404);
         }
 
-        if ($intake->status === DocumentIntake::STATUS_FINALIZED) {
-            return response()->json([
-                'message' => 'Nie mozna usunac zakonczonej analizy.',
-            ], 409);
-        }
-
-        if ($intake->document instanceof Document && $intake->document->status === Document::STATUS_DRAFT) {
-            $intake->document->delete();
-        }
-
-        $intake->clearMediaCollection('scans');
-        $intake->delete();
+        $this->deleteIntake($intake);
 
         return response()->json([], 204);
     }
@@ -311,5 +321,15 @@ class DocumentIntakeController extends Controller
             ->filter(fn (string $id) => $id !== '' && ctype_digit($id))
             ->map(fn (string $id) => (int) $id)
             ->values();
+    }
+
+    private function deleteIntake(DocumentIntake $intake): void
+    {
+        if ($intake->document instanceof Document && $intake->document->status === Document::STATUS_DRAFT) {
+            $intake->document->delete();
+        }
+
+        $intake->clearMediaCollection('scans');
+        $intake->delete();
     }
 }

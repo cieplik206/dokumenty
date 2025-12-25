@@ -112,6 +112,65 @@ test('document intake can be finalized as paper', function () {
         ->and($document->binder_id)->toBe($binder->id);
 });
 
+test('finalized intake can be removed without deleting document', function () {
+    $user = User::factory()->create();
+    $document = Document::factory()->create([
+        'status' => Document::STATUS_READY,
+    ]);
+
+    $intake = DocumentIntake::factory()->create([
+        'user_id' => $user->id,
+        'document_id' => $document->id,
+        'status' => DocumentIntake::STATUS_FINALIZED,
+        'storage_type' => 'paper',
+        'finalized_at' => now(),
+    ]);
+
+    $response = $this
+        ->actingAs($user)
+        ->deleteJson(route('documents.intake.destroy', $intake));
+
+    $response->assertNoContent();
+
+    expect(DocumentIntake::query()->whereKey($intake->id)->exists())->toBeFalse()
+        ->and(Document::query()->whereKey($document->id)->exists())->toBeTrue();
+});
+
+test('document intake bulk destroy removes selected intakes', function () {
+    $user = User::factory()->create();
+    $document = Document::factory()->create([
+        'status' => Document::STATUS_READY,
+    ]);
+
+    $finalized = DocumentIntake::factory()->create([
+        'user_id' => $user->id,
+        'document_id' => $document->id,
+        'status' => DocumentIntake::STATUS_FINALIZED,
+        'storage_type' => 'paper',
+        'finalized_at' => now(),
+    ]);
+
+    $uploaded = DocumentIntake::factory()->create([
+        'user_id' => $user->id,
+        'status' => DocumentIntake::STATUS_UPLOADED,
+    ]);
+
+    $other = DocumentIntake::factory()->create();
+
+    $response = $this
+        ->actingAs($user)
+        ->deleteJson(route('documents.intake.destroy.bulk'), [
+            'ids' => [$finalized->id, $uploaded->id, $other->id],
+        ]);
+
+    $response->assertNoContent();
+
+    expect(DocumentIntake::query()->whereKey($finalized->id)->exists())->toBeFalse()
+        ->and(DocumentIntake::query()->whereKey($uploaded->id)->exists())->toBeFalse()
+        ->and(DocumentIntake::query()->whereKey($other->id)->exists())->toBeTrue()
+        ->and(Document::query()->whereKey($document->id)->exists())->toBeTrue();
+});
+
 test('document intake can be retried when done without document', function () {
     Queue::fake();
 

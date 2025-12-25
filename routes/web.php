@@ -31,6 +31,8 @@ Route::middleware('auth')->group(function () {
         ->name('documents.intake.finalize');
     Route::post('documents/intake/{intake}/retry', [DocumentIntakeController::class, 'retry'])
         ->name('documents.intake.retry');
+    Route::delete('documents/intake', [DocumentIntakeController::class, 'destroyBulk'])
+        ->name('documents.intake.destroy.bulk');
     Route::delete('documents/intake/{intake}', [DocumentIntakeController::class, 'destroy'])
         ->name('documents.intake.destroy');
 
