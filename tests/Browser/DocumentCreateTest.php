@@ -54,6 +54,7 @@ it('creates a document from intake uploads', function () {
             ->assertSee('Gotowe do decyzji')
             ->press('Elektroniczna')
             ->wait(1)
+            ->assertSee('Dokument utworzony')
             ->assertSee('Decyzja zapisana.');
     } finally {
         @unlink($filePath);

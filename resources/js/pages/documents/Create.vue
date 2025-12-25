@@ -671,6 +671,9 @@ const breadcrumbs: BreadcrumbItem[] = [
                                         <p class="text-xs text-muted-foreground">
                                             Plikow: {{ item.scans_count }} · {{ formatFileSize(item.scans_size) }}
                                         </p>
+                                        <p v-if="item.document_id" class="text-xs text-foreground">
+                                            Dokument utworzony
+                                        </p>
                                         <p
                                             v-if="item.pages.length > 1"
                                             class="text-xs text-muted-foreground"
@@ -687,6 +690,16 @@ const breadcrumbs: BreadcrumbItem[] = [
                                 </div>
 
                                 <div class="flex flex-wrap items-center gap-2">
+                                    <Button
+                                        v-if="item.document_id"
+                                        as-child
+                                        size="sm"
+                                        variant="outline"
+                                    >
+                                        <Link :href="documentsRoutes.show(item.document_id).url">
+                                            Otworz dokument
+                                        </Link>
+                                    </Button>
                                     <Button
                                         v-if="canStart(item)"
                                         size="sm"
