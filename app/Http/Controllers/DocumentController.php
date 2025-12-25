@@ -25,7 +25,7 @@ class DocumentController extends Controller
      */
     public function index(DocumentIndexRequest $request): Response
     {
-        return $this->renderIndex($request, 'documents/Index');
+        return $this->renderIndex($request, $this->resolveIndexView($request, 'grid'));
     }
 
     /**
@@ -33,7 +33,7 @@ class DocumentController extends Controller
      */
     public function indexGrid(DocumentIndexRequest $request): Response
     {
-        return $this->renderIndex($request, 'documents/IndexGrid');
+        return $this->renderIndex($request, $this->resolveIndexView($request, 'grid'));
     }
 
     /**
@@ -41,7 +41,7 @@ class DocumentController extends Controller
      */
     public function indexTable(DocumentIndexRequest $request): Response
     {
-        return $this->renderIndex($request, 'documents/IndexTable');
+        return $this->renderIndex($request, $this->resolveIndexView($request, 'table'));
     }
 
     /**
@@ -49,13 +49,13 @@ class DocumentController extends Controller
      */
     public function indexCompact(DocumentIndexRequest $request): Response
     {
-        return $this->renderIndex($request, 'documents/IndexCompact');
+        return $this->renderIndex($request, $this->resolveIndexView($request, 'compact'));
     }
 
     /**
      * Common method to render document index views.
      */
-    private function renderIndex(DocumentIndexRequest $request, string $component): Response
+    private function renderIndex(DocumentIndexRequest $request, string $view): Response
     {
         $filters = $request->validated();
 
@@ -96,12 +96,30 @@ class DocumentController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
-        return Inertia::render($component, [
+        return Inertia::render('documents/Index', [
             'documents' => $documents,
             'binders' => $binders,
             'categories' => $categories,
             'filters' => $filters,
+            'view' => $view,
         ]);
+    }
+
+    private function resolveIndexView(DocumentIndexRequest $request, string $fallback): string
+    {
+        $allowedViews = ['grid', 'compact', 'table'];
+
+        if (! in_array($fallback, $allowedViews, true)) {
+            $fallback = 'grid';
+        }
+
+        $requestedView = $request->input('view');
+
+        if (is_string($requestedView) && in_array($requestedView, $allowedViews, true)) {
+            return $requestedView;
+        }
+
+        return $fallback;
     }
 
     /**
